@@ -78,6 +78,7 @@ type Observer interface {
 	OnRateLimited()
 	OnSendExhausted(n int)
 	OnQueue(items, bytes int)
+	OnSubsystemDisabled()
 }
 
 // Worker batches items from a bounded buffer and delivers them via a Sender. A
@@ -148,6 +149,9 @@ func (w *Worker[T]) Start() {
 			// A panicking loop self-disables rather than crash-looping.
 			w.disabled.set(true)
 			close(w.stopped)
+			if w.obs != nil {
+				w.obs.OnSubsystemDisabled()
+			}
 			if w.onPanic != nil {
 				w.onPanic(info)
 			}

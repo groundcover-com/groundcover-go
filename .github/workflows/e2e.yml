@@ -1,0 +1,38 @@
+name: E2E
+
+# Live round-trip (trainer) against a real backend. Runs on demand and nightly.
+# Requires repository/environment secrets: GC_DSN, GC_INGESTION_KEY, GC_API_KEY,
+# GC_API_URL, and optionally GC_BACKEND_ID. GC_DSN must be the BYOC ingestion
+# origin (not the app URL).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  trainer:
+    name: trainer round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Run trainer
+        working-directory: _testdata/trainer
+        env:
+          GC_DSN: ${{ secrets.GC_DSN }}
+          GC_INGESTION_KEY: ${{ secrets.GC_INGESTION_KEY }}
+          GC_API_KEY: ${{ secrets.GC_API_KEY }}
+          GC_API_URL: ${{ secrets.GC_API_URL }}
+          GC_BACKEND_ID: ${{ secrets.GC_BACKEND_ID }}
+        run: |
+          if [ -z "${GC_DSN}" ] || [ -z "${GC_INGESTION_KEY}" ] || [ -z "${GC_API_KEY}" ] || [ -z "${GC_API_URL}" ]; then
+            echo "E2E secrets are not configured; skipping the live trainer."
+            exit 0
+          fi
+          go run .

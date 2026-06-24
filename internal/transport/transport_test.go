@@ -25,12 +25,14 @@ type countObserver struct {
 	retries     atomic.Int64
 	rateLimited atomic.Int64
 	exhausted   atomic.Int64
+	disabled    atomic.Int64
 }
 
 func (o *countObserver) OnSent(n int)          { o.sent.Add(int64(n)) }
 func (o *countObserver) OnRetry()              { o.retries.Add(1) }
 func (o *countObserver) OnRateLimited()        { o.rateLimited.Add(1) }
 func (o *countObserver) OnSendExhausted(n int) { o.exhausted.Add(int64(n)) }
+func (o *countObserver) OnSubsystemDisabled()  { o.disabled.Add(1) }
 func (o *countObserver) OnQueue(_, _ int)      {}
 
 func newWorker(t *testing.T, sender transport.Sender, obs transport.Observer, cfg transport.WorkerConfig) (*transport.Worker[int], *ringbuf.Buffer[int]) {
@@ -252,6 +254,55 @@ func TestWorkerRetryExhausted(t *testing.T) {
 	if sender.Calls() != 3 { // initial + 2 retries
 		t.Fatalf("expected 3 attempts, got %d", sender.Calls())
 	}
+}
+
+func TestWorkerBackoffMath(t *testing.T) {
+	var sleeps []time.Duration
+	var mu sync.Mutex
+	sender := &testutil.MockSender{Responder: func(_ int, _ []byte) error {
+		return &transport.SendError{StatusCode: 503, Retryable: true, Err: errors.New("down")}
+	}}
+	const retryMax = 4 * time.Second
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{
+		BatchSize:   10,
+		MaxRetries:  8,
+		BaseBackoff: 100 * time.Millisecond,
+		RetryMax:    retryMax,
+		Sleep:       func(_ context.Context, d time.Duration) { mu.Lock(); sleeps = append(sleeps, d); mu.Unlock() },
+	})
+	w.Start()
+	defer func() { _ = w.Close(context.Background()) }()
+
+	ring.Push(1)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sleeps) != 8 { // one sleep per retry attempt
+		t.Fatalf("expected 8 backoff sleeps, got %d", len(sleeps))
+	}
+	for i, d := range sleeps {
+		if d < 0 || d > retryMax {
+			t.Fatalf("sleep %d = %v, must be within [0, %v] (full jitter, capped)", i, d, retryMax)
+		}
+	}
+}
+
+func TestWorkerSendPanicDoesNotCrash(t *testing.T) {
+	// A panic inside a send must be contained by the per-send guard and must not
+	// take down the worker or the test process.
+	sender := &testutil.MockSender{Responder: func(int, []byte) error { panic("send panic") }}
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{BatchSize: 1, MaxRetries: 0})
+	w.Start()
+	defer func() { _ = w.Close(context.Background()) }()
+
+	ring.Push(1)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	// Reaching here without a process crash is the assertion.
 }
 
 func TestWorkerCloseIdempotent(t *testing.T) {

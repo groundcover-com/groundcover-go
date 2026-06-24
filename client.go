@@ -126,8 +126,10 @@ func (c *Client) CaptureMessage(ctx context.Context, msg string, level Level, op
 	if c.disabled {
 		return
 	}
+	if !level.valid() {
+		level = LevelInfo
+	}
 	safeguard.Do(func() {
-		cfg := c.config()
 		e := &Event{
 			ID:           newUUID(),
 			Timestamp:    time.Now(),
@@ -138,10 +140,6 @@ func (c *Client) CaptureMessage(ctx context.Context, msg string, level Level, op
 			ErrorMessage: msg,
 			Service:      Service{Name: c.res.serviceName, Version: c.res.release},
 		}
-		if !level.valid() {
-			e.Level = LevelInfo
-		}
-		_ = cfg
 		c.finishAndEnqueue(ctx, e, opts)
 	}, c.onPanic)
 }
@@ -331,6 +329,7 @@ func (o metricsObserver) OnRateLimited() { o.m.IncRateLimited() }
 func (o metricsObserver) OnSendExhausted(n int) {
 	o.m.AddDropped(selfmetrics.DropSendExhausted, int64(n))
 }
+func (o metricsObserver) OnSubsystemDisabled() { o.m.IncSubsystemsDisabled() }
 func (o metricsObserver) OnQueue(items, bytes int) {
 	o.m.SetQueuePending(int64(items), int64(bytes))
 }
