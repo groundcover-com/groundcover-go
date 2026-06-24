@@ -116,7 +116,7 @@ func (c *Client) CaptureError(ctx context.Context, err error, opts ...Option) {
 		return
 	}
 	safeguard.Do(func() {
-		e := c.newErrorEvent(err, true)
+		e := c.newErrorEvent(err)
 		c.finishAndEnqueue(ctx, e, opts)
 	}, c.onPanic)
 }
@@ -179,15 +179,15 @@ func (c *Client) CaptureRecovered(ctx context.Context, recovered any, opts ...Op
 	}, c.onPanic)
 }
 
-// newErrorEvent builds an event from an error.
-func (c *Client) newErrorEvent(err error, handled bool) *Event {
+// newErrorEvent builds a handled-error event from an error.
+func (c *Client) newErrorEvent(err error) *Event {
 	cfg := c.config()
 	return &Event{
 		ID:           newUUID(),
 		Timestamp:    time.Now(),
 		Type:         eventType,
 		Level:        LevelError,
-		ErrorHandled: handled,
+		ErrorHandled: true,
 		ErrorType:    errorType(err),
 		ErrorMessage: err.Error(),
 		Stacktrace:   captureStack(3, cfg.StackDepthMax, c.res.mainModule),

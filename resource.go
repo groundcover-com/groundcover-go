@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// OTel resource attribute keys used across resource detection and wire encoding.
+const (
+	attrServiceName  = "service.name"
+	attrServiceVer   = "service.version"
+	attrDeployEnv    = "deployment.environment.name"
+	attrK8sNamespace = "k8s.namespace.name"
+	attrK8sCluster   = "k8s.cluster.name"
+)
+
 // resource holds the detected resource/spine attributes, read once at init.
 type resource struct {
 	serviceName string
@@ -70,15 +79,15 @@ func detectResource(cfg Config) resource {
 			attrs[k] = v
 		}
 	}
-	putIfSet("service.name", serviceName)
-	putIfSet("service.version", release)
-	putIfSet("deployment.environment.name", env)
+	putIfSet(attrServiceName, serviceName)
+	putIfSet(attrServiceVer, release)
+	putIfSet(attrDeployEnv, env)
 	putIfSet("host.name", hostname)
 	putIfSet("k8s.pod.uid", podUID)
 	putIfSet("k8s.pod.name", podName)
-	putIfSet("k8s.namespace.name", namespace)
+	putIfSet(attrK8sNamespace, namespace)
 	putIfSet("k8s.node.name", nodeName)
-	putIfSet("k8s.cluster.name", cluster)
+	putIfSet(attrK8sCluster, cluster)
 
 	return resource{
 		serviceName: serviceName,

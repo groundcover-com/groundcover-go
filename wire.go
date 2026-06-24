@@ -1,9 +1,10 @@
 package groundcover
 
-import (
-	"encoding/json"
-	"strconv"
-)
+import "encoding/json"
+
+// scalarSizeEstimate is the assumed byte cost of a non-string scalar attribute
+// value (number/bool) in the buffer's byte budget.
+const scalarSizeEstimate = 16
 
 // userAgent is the SDK identifier sent on the wire.
 func userAgent() string { return sdkName + "/" + Version }
@@ -45,7 +46,7 @@ type wirePayload struct {
 // fields (service.name, env, namespace, cluster, releaseId).
 func (r resource) sessionAttributes() map[string]any {
 	return map[string]any{
-		"service.name":       r.serviceName,
+		attrServiceName:      r.serviceName,
 		"env":                r.env,
 		"namespace":          r.namespace,
 		"cluster":            r.cluster,
@@ -60,8 +61,7 @@ func (r resource) sessionAttributes() map[string]any {
 // avoid redundancy.
 func isSessionLevelKey(k string) bool {
 	switch k {
-	case "service.name", "service.version", "deployment.environment.name",
-		"k8s.namespace.name", "k8s.cluster.name":
+	case attrServiceName, attrServiceVer, attrDeployEnv, attrK8sNamespace, attrK8sCluster:
 		return true
 	default:
 		return false
@@ -154,9 +154,10 @@ func encodeBatch(events []*Event, res resource) ([]byte, error) {
 // budget. It intentionally over- rather than under-estimates.
 func estimateSize(e *Event) int {
 	const base = 256
-	size := base + len(e.Type) + len(e.ErrorType) + len(e.ErrorMessage) + len(e.ErrorMessage) + len(e.Fingerprint)
+	const perFrameOverhead = 24
+	size := base + len(e.Type) + len(e.ErrorType) + len(e.ErrorMessage) + len(e.Fingerprint)
 	for _, f := range e.Stacktrace {
-		size += len(f.Function) + len(f.File) + 24
+		size += len(f.Function) + len(f.File) + perFrameOverhead
 	}
 	for k, v := range e.Attributes {
 		size += len(k) + estimateValueSize(v)
@@ -170,19 +171,11 @@ func estimateValueSize(v any) int {
 	case string:
 		return len(val)
 	case nil:
-		return 4
+		return scalarSizeEstimate
 	case map[string]any:
-		total := 2
-		for k, item := range val {
-			total += len(k) + estimateValueSize(item)
-		}
-		return total
+		return estimateMapSize(val)
 	case Attributes:
-		total := 2
-		for k, item := range val {
-			total += len(k) + estimateValueSize(item)
-		}
-		return total
+		return estimateMapSize(val)
 	case []any:
 		total := 2
 		for _, item := range val {
@@ -190,6 +183,14 @@ func estimateValueSize(v any) int {
 		}
 		return total
 	default:
-		return len(strconv.Itoa(0)) + 16 // small scalar
+		return scalarSizeEstimate
 	}
+}
+
+func estimateMapSize(m map[string]any) int {
+	total := 2
+	for k, item := range m {
+		total += len(k) + estimateValueSize(item)
+	}
+	return total
 }
