@@ -48,7 +48,9 @@ func main() {
 ```
 
 See [`example_test.go`](example_test.go) for more usage, including users, custom
-attributes, panic recovery, and HTTP middleware.
+attributes, panic recovery, and HTTP middleware. For a step-by-step guide aimed
+at AI coding agents (and humans) instrumenting an existing service, see
+[`docs/llm-instrumentation-guide.md`](docs/llm-instrumentation-guide.md).
 
 ## Design principles
 
