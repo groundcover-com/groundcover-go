@@ -1,0 +1,102 @@
+# groundcover-go
+
+The official [groundcover](https://groundcover.com) runtime SDK for Go.
+
+> **v1 scope: error tracking.** Tracing, profiling, logs, and metrics producers
+> are planned on top of the same shared core.
+
+`groundcover-go` captures application errors and panics and ships them to
+groundcover with a strong safety guarantee: **the SDK never affects the host
+application**. Every entry point and background task is panic-guarded, memory is
+strictly bounded, and capturing an error never blocks the caller.
+
+## Install
+
+```bash
+go get github.com/groundcover-com/groundcover-go
+```
+
+The core library depends on the **standard library only**.
+
+## Quick start
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	groundcover "github.com/groundcover-com/groundcover-go"
+)
+
+func main() {
+	// Zero-config in-cluster: workload/env/release/pod are read from the
+	// Downward API environment. IngestionKey is optional (local sensor needs none).
+	if err := groundcover.Init(groundcover.Config{
+		DSN:          "https://<your-ingestion-origin>",
+		IngestionKey: "<ingestion-key>",
+	}); err != nil {
+		log.Fatal(err)
+	}
+	defer groundcover.Close(context.Background()) // flush pending on shutdown
+
+	if err := doWork(); err != nil {
+		groundcover.CaptureError(context.Background(), err)
+	}
+}
+```
+
+See [`example_test.go`](example_test.go) for more usage, including users, custom
+attributes, panic recovery, and HTTP middleware.
+
+## Design principles
+
+1. **Never affect the host.** All public entry points and goroutines are
+   panic-guarded; SDK-internal faults are swallowed (self-metric + throttled log).
+2. **Memory is always bounded.** A ring buffer bounded by both item count and a
+   byte budget drops the *oldest* events on overflow.
+3. **Capture never blocks.** Callers enrich and perform one non-blocking hand-off.
+4. **OTel semantics, not otel-go.** OTel attribute naming on the wire; no
+   `opentelemetry-go` dependency in core.
+5. **Minimal, vendored dependencies.** stdlib first; optional integrations live
+   in nested modules.
+6. **Self-observable.** Counters via `Stats()` and an optional Prometheus bridge;
+   logs are self-throttling.
+
+## Optional integrations
+
+| Module | Import path | Adds |
+| ------ | ----------- | ---- |
+| net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` | stdlib only (part of core) |
+| Gin middleware | `github.com/groundcover-com/groundcover-go/contrib/gin` | `github.com/gin-gonic/gin` |
+| Prometheus bridge | `github.com/groundcover-com/groundcover-go/prometheus` | `github.com/VictoriaMetrics/metrics` |
+
+Each optional integration with third-party dependencies is a **separate Go
+module**, so the core `go.sum` stays dependency-free.
+
+## Runtime support
+
+The SDK supports the **two most recent Go majors** (today **1.25** and **1.26**),
+matching dd-trace-go / otel-go / sentry-go. The `go.mod` floor is the older of
+the two.
+
+| SDK version | Supported Go |
+| ----------- | ------------ |
+| v0.x        | 1.25, 1.26   |
+
+Every released SDK version keeps working for the runtime it shipped against;
+pin an older SDK release if you run an older Go.
+
+## Development
+
+```bash
+make ci        # build + vet + lint + race tests — the gate for every change
+make trainer   # live round-trip against a real backend (requires GC_* env vars)
+```
+
+AI agents must never author commits; see [`AGENTS.md`](AGENTS.md).
+
+## License
+
+[Apache 2.0](LICENSE).

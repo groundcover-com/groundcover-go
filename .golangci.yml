@@ -1,0 +1,113 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - dupword
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - forbidigo
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - godot
+    - gosec
+    - govet
+    - ineffassign
+    - intrange
+    - makezero
+    - misspell
+    - nakedret
+    - nilerr
+    - noctx
+    - nolintlint
+    - perfsprint
+    - prealloc
+    - predeclared
+    - reassign
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - wastedassign
+
+  settings:
+    depguard:
+      rules:
+        all:
+          files:
+            - $all
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: use the standard library errors package and fmt.Errorf with %w
+            - pkg: io/ioutil
+              desc: io/ioutil is deprecated; use io and os
+            - pkg: math/rand
+              desc: use math/rand/v2 (non-crypto) or crypto/rand (security-sensitive)
+            - pkg: github.com/golang/protobuf
+              desc: use google.golang.org/protobuf if protobuf is ever required
+            - pkg: log
+              desc: use log/slog
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: package-comments
+        - name: blank-imports
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: indent-error-flow
+        - name: var-declaration
+        - name: unexported-return
+        - name: receiver-naming
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+    gosec:
+      excludes:
+        - G404 # math/rand/v2 is acceptable for non-security jitter
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - gochecknoglobals
+          - dupword
+          - unparam
+          - errcheck
+          - contextcheck
+          - prealloc
+      - source: "//nolint:gochecknoglobals"
+        linters:
+          - gochecknoglobals
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/groundcover-com/groundcover-go

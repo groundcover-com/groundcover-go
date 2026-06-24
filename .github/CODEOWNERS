@@ -1,0 +1,4 @@
+# Default owners for everything in the repo.
+# Update these to the appropriate maintainer team before enabling the
+# "require review from CODEOWNERS" branch protection rule.
+*       @groundcover-com/sdk-maintainers
