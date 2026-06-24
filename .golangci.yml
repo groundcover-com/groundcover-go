@@ -106,6 +106,7 @@ linters:
           - prealloc
           - goconst
           - forbidigo
+          - noctx
       - source: "//nolint:gochecknoglobals"
         linters:
           - gochecknoglobals
