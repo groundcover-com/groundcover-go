@@ -52,8 +52,12 @@ type Event struct {
 	ErrorHandled bool
 	// Stacktrace is the resolved frames, innermost first.
 	Stacktrace []Frame
-	// Fingerprint is the client-computed grouping key.
+	// Fingerprint is the client-computed grouping key (opaque hash).
 	Fingerprint string
+	// Title is the human-readable display label (e.g. "*net.OpError: connection
+	// refused"). It is derived from ErrorType and ErrorMessage when left empty.
+	// Unlike Fingerprint, it is for display, not grouping.
+	Title string
 	// Attributes is the custom data bag.
 	Attributes Attributes
 	// Resource is the detected resource/spine attributes (telemetry.sdk.*, k8s.*, ...).
@@ -86,6 +90,11 @@ func WithLevel(l Level) Option {
 // WithFingerprint overrides the client-computed grouping fingerprint.
 func WithFingerprint(fp string) Option {
 	return func(e *Event) { e.Fingerprint = fp }
+}
+
+// WithTitle overrides the human-readable display title for the event.
+func WithTitle(title string) Option {
+	return func(e *Event) { e.Title = title }
 }
 
 // WithUser sets the identity on the event (per-call override).

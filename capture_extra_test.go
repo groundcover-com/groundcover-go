@@ -35,6 +35,28 @@ func TestCaptureOptions(t *testing.T) {
 	}
 }
 
+func TestTitleComputedAndOverridable(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{}, sender)
+
+	// Computed title: "errorType: message".
+	c.CaptureError(context.Background(), errors.New("connection refused"))
+	_ = c.Flush(context.Background())
+	got := decodePayload(t, sender).Events[0].Attributes.ErrorMetadata["gc.title"]
+	if got != "*errors.errorString: connection refused" {
+		t.Fatalf("computed title = %v", got)
+	}
+
+	// Explicit override via WithTitle.
+	sender2 := &testutil.MockSender{}
+	c2 := mustClient(t, Config{}, sender2)
+	c2.CaptureError(context.Background(), errors.New("x"), WithTitle("Payment declined"))
+	_ = c2.Flush(context.Background())
+	if got := decodePayload(t, sender2).Events[0].Attributes.ErrorMetadata["gc.title"]; got != "Payment declined" {
+		t.Fatalf("WithTitle override = %v", got)
+	}
+}
+
 func TestWithLevelRejectsInvalid(t *testing.T) {
 	sender := &testutil.MockSender{}
 	c := mustClient(t, Config{}, sender)

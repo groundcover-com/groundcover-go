@@ -101,7 +101,9 @@ groundcover.CaptureError(ctx, err,
 )
 ```
 
-Available options: `WithAttributes`, `WithUser`, `WithLevel`, `WithFingerprint`.
+Available options: `WithAttributes`, `WithUser`, `WithLevel`, `WithFingerprint`
+(overrides the opaque grouping key), `WithTitle` (overrides the human-readable
+display label; by default it's derived as `errorType: message`).
 
 Do **not**:
 

@@ -83,6 +83,28 @@ func TestEncodeBatchShape(t *testing.T) {
 	}
 }
 
+func TestEncodeBatchIncludesTitle(t *testing.T) {
+	e := &Event{
+		Type:         "exception",
+		Timestamp:    time.Unix(1, 0),
+		Level:        LevelError,
+		ErrorType:    "*net.OpError",
+		ErrorMessage: "connection refused",
+		Title:        "*net.OpError: connection refused",
+	}
+	body, err := encodeBatch([]*Event{e}, testResource())
+	if err != nil {
+		t.Fatalf("encodeBatch: %v", err)
+	}
+	var p wirePayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := p.Events[0].Attributes.ErrorMetadata["gc.title"]; got != "*net.OpError: connection refused" {
+		t.Fatalf("gc.title not on the wire: %v", got)
+	}
+}
+
 func TestEstimateSizeAccountsForNestedAttributes(t *testing.T) {
 	plain := &Event{Type: "exception", ErrorMessage: "x"}
 	rich := &Event{

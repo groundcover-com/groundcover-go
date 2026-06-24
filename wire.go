@@ -95,9 +95,16 @@ func buildMetadata(e *Event, res resource) map[string]any {
 	md["level"] = string(e.Level)
 	md["severity_number"] = e.Level.severityNumber()
 
-	// Custom attributes (sanitized) take precedence over derived keys.
+	// Custom attributes (sanitized). Applied before the reserved gc.* keys so
+	// the SDK-managed namespace always wins.
 	for k, v := range e.Attributes {
 		md[k] = sanitizeValue(v, 0)
+	}
+
+	// Reserved gc.* namespace: the human-readable display title (separate from
+	// the opaque error_fingerprint grouping key).
+	if e.Title != "" {
+		md["gc.title"] = e.Title
 	}
 	return md
 }
@@ -155,7 +162,7 @@ func encodeBatch(events []*Event, res resource) ([]byte, error) {
 func estimateSize(e *Event) int {
 	const base = 256
 	const perFrameOverhead = 24
-	size := base + len(e.Type) + len(e.ErrorType) + len(e.ErrorMessage) + len(e.Fingerprint)
+	size := base + len(e.Type) + len(e.ErrorType) + len(e.ErrorMessage) + len(e.Fingerprint) + len(e.Title)
 	for _, f := range e.Stacktrace {
 		size += len(f.Function) + len(f.File) + perFrameOverhead
 	}

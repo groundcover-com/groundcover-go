@@ -136,7 +136,7 @@ func (c *Client) CaptureMessage(ctx context.Context, msg string, level Level, op
 			Type:         eventType,
 			Level:        level,
 			ErrorHandled: true,
-			ErrorType:    "message",
+			ErrorType:    messageErrorType,
 			ErrorMessage: msg,
 			Service:      Service{Name: c.res.serviceName, Version: c.res.release},
 		}
@@ -240,6 +240,9 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 	}
 	if e.Fingerprint == "" {
 		e.Fingerprint = fingerprint(e)
+	}
+	if e.Title == "" {
+		e.Title = titleFor(e)
 	}
 
 	if cfg.BeforeSend != nil {
