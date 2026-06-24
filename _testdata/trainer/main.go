@@ -59,14 +59,9 @@ func run() error {
 	}); err != nil {
 		return fmt.Errorf("init: %w", err)
 	}
-	ctx := context.Background()
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), flushTimeout)
-		defer cancel()
-		_ = groundcover.Close(closeCtx)
-	}()
+	defer func() { _ = groundcover.CloseTimeout(flushTimeout) }()
 
-	ctx = groundcover.SetUser(ctx, groundcover.User{ID: "trainer-user", Organization: "groundcover"})
+	ctx := groundcover.SetUser(context.Background(), groundcover.User{ID: "trainer-user", Organization: "groundcover"})
 	groundcover.CaptureError(ctx, errors.New("synthetic trainer error "+testID), groundcover.WithAttributes(groundcover.Attributes{
 		"gc.test_id":     testID,
 		"trainer.string": "hello",
@@ -75,9 +70,7 @@ func run() error {
 		"trainer.bool":   true,
 	}))
 
-	flushCtx, cancel := context.WithTimeout(ctx, flushTimeout)
-	defer cancel()
-	if err := groundcover.Flush(flushCtx); err != nil {
+	if err := groundcover.FlushTimeout(flushTimeout); err != nil {
 		return fmt.Errorf("flush: %w", err)
 	}
 	fmt.Println("trainer: submitted, polling for read-back...")

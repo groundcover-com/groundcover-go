@@ -45,7 +45,6 @@ pending events are flushed on shutdown.
 
 ```go
 import (
-	"context"
 	"log"
 	"os"
 	"time"
@@ -63,11 +62,9 @@ func main() {
 	}); err != nil {
 		log.Fatalf("groundcover init: %v", err)
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = groundcover.Close(ctx) // bounded flush on shutdown
-	}()
+	defer groundcover.CloseTimeout(5 * time.Second) // bounded flush on shutdown
+	// Or, to compose with an existing shutdown context:
+	//   defer groundcover.Close(shutdownCtx)
 
 	// ... start the app ...
 }
@@ -208,12 +205,12 @@ groundcover.Config{
 There is no background time to flush, so flush explicitly before exit:
 
 ```go
-defer func() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = groundcover.Flush(ctx)
-}()
+defer groundcover.FlushTimeout(2 * time.Second)
 ```
+
+`FlushTimeout`/`CloseTimeout` are convenience wrappers; `Flush(ctx)`/`Close(ctx)`
+remain the primitives when you need cancellation or to compose with an existing
+context.
 
 ---
 
