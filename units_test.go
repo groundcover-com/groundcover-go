@@ -166,6 +166,23 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
+func TestLastPathSegment(t *testing.T) {
+	if got := lastPathSegment("github.com/foo/bar"); got != "bar" {
+		t.Fatalf("got %q", got)
+	}
+	if got := lastPathSegment("main"); got != "main" {
+		t.Fatalf("no-slash path should be returned as-is, got %q", got)
+	}
+}
+
+func TestContextWithScopeNilContext(t *testing.T) {
+	//nolint:staticcheck // explicitly exercising the nil-context fallback
+	ctx := contextWithScope(nil, &Scope{})
+	if ctx == nil {
+		t.Fatal("contextWithScope(nil, ...) must return a usable context")
+	}
+}
+
 func TestLevelSeverity(t *testing.T) {
 	if LevelError.severityNumber() != 17 || LevelDebug.severityNumber() != 5 {
 		t.Fatal("unexpected severity numbers")
