@@ -3,6 +3,7 @@ package groundcover
 import (
 	"context"
 	"sync/atomic"
+	"time"
 )
 
 // global holds the package-level default client used by the top-level functions
@@ -91,6 +92,12 @@ func Flush(ctx context.Context) error { return currentGlobal().Flush(ctx) }
 
 // Close closes the package-level client.
 func Close(ctx context.Context) error { return currentGlobal().Close(ctx) }
+
+// FlushTimeout flushes the package-level client with a context bounded by d.
+func FlushTimeout(d time.Duration) error { return currentGlobal().FlushTimeout(d) }
+
+// CloseTimeout closes the package-level client with a context bounded by d.
+func CloseTimeout(d time.Duration) error { return currentGlobal().CloseTimeout(d) }
 
 // GlobalStats returns the package-level client's self-metrics snapshot. (The
 // per-client accessor is the Client.Stats method; this avoids colliding with

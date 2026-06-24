@@ -315,6 +315,23 @@ func (c *Client) Close(ctx context.Context) error {
 	return c.worker.Close(ctx)
 }
 
+// FlushTimeout is convenience sugar for Flush with a fresh context bounded by d.
+// The context-based Flush remains the primitive for callers that need
+// cancellation or composition with an existing context.
+func (c *Client) FlushTimeout(d time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return c.Flush(ctx)
+}
+
+// CloseTimeout is convenience sugar for Close with a fresh context bounded by d.
+// The context-based Close remains the primitive.
+func (c *Client) CloseTimeout(d time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return c.Close(ctx)
+}
+
 // Stats returns a snapshot of the SDK's self-observability counters.
 func (c *Client) Stats() Stats {
 	return statsFromSnapshot(c.metrics.Snapshot())

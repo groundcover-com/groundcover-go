@@ -99,3 +99,13 @@ func TestGlobalFlush(t *testing.T) {
 		t.Fatalf("global flush: %v", err)
 	}
 }
+
+func TestGlobalFlushTimeoutAndCloseTimeout(t *testing.T) {
+	initDropGlobal(t)
+	if err := groundcover.FlushTimeout(time.Second); err != nil {
+		t.Fatalf("global FlushTimeout: %v", err)
+	}
+	if err := groundcover.CloseTimeout(time.Second); err != nil {
+		t.Fatalf("global CloseTimeout: %v", err)
+	}
+}
