@@ -63,8 +63,6 @@ linters:
               desc: use math/rand/v2 (non-crypto) or crypto/rand (security-sensitive)
             - pkg: github.com/golang/protobuf
               desc: use google.golang.org/protobuf if protobuf is ever required
-            - pkg: log
-              desc: use log/slog
     revive:
       rules:
         - name: exported
@@ -86,6 +84,13 @@ linters:
     gosec:
       excludes:
         - G404 # math/rand/v2 is acceptable for non-security jitter
+    forbidigo:
+      # Replace the default fmt.Print* rules with a single rule banning the
+      # standard `log` package in favor of `log/slog` (depguard's prefix match
+      # cannot ban `log` while allowing `log/slog`).
+      forbid:
+        - pattern: '^log\.'
+          msg: use log/slog instead of the standard log package
 
   exclusions:
     generated: lax
@@ -99,6 +104,8 @@ linters:
           - errcheck
           - contextcheck
           - prealloc
+          - goconst
+          - forbidigo
       - source: "//nolint:gochecknoglobals"
         linters:
           - gochecknoglobals
