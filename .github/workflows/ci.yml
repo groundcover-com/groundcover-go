@@ -70,6 +70,24 @@ jobs:
       - name: Test (race + coverage)
         run: go test -race -covermode=atomic -coverprofile=coverage.txt ./...
 
+  nested-modules:
+    name: nested-modules (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ["prometheus", "contrib/gin", "_testdata/trainer"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_FLOOR }}
+      - name: Build and test module
+        working-directory: ${{ matrix.module }}
+        run: |
+          go build ./...
+          go test ./...
+
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
