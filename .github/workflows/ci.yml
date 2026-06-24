@@ -50,7 +50,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_FLOOR }}
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
 
@@ -105,6 +105,8 @@ jobs:
     name: codeql
     runs-on: ubuntu-latest
     permissions:
+      contents: read
+      actions: read
       security-events: write
     steps:
       - uses: actions/checkout@v4
