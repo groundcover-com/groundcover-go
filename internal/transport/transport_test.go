@@ -305,6 +305,62 @@ func TestWorkerSendPanicDoesNotCrash(t *testing.T) {
 	// Reaching here without a process crash is the assertion.
 }
 
+// loopPanicObserver panics inside OnQueue, which the worker calls from its loop
+// goroutine, to deterministically exercise the loop self-disable path.
+type loopPanicObserver struct{ disabled atomic.Int64 }
+
+func (o *loopPanicObserver) OnSent(int)           {}
+func (o *loopPanicObserver) OnRetry()             {}
+func (o *loopPanicObserver) OnRateLimited()       {}
+func (o *loopPanicObserver) OnSendExhausted(int)  {}
+func (o *loopPanicObserver) OnSubsystemDisabled() { o.disabled.Add(1) }
+func (o *loopPanicObserver) OnQueue(int, int)     { panic("queue panic") }
+
+func TestWorkerLoopPanicSelfDisables(t *testing.T) {
+	obs := &loopPanicObserver{}
+	w, _ := newWorker(t, &testutil.MockSender{}, obs, transport.WorkerConfig{FlushInterval: 20 * time.Millisecond})
+	w.Start()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && obs.disabled.Load() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if obs.disabled.Load() != 1 {
+		t.Fatalf("expected the loop to self-disable exactly once, got %d", obs.disabled.Load())
+	}
+
+	// Close must not hang after a self-disabled loop.
+	done := make(chan error, 1)
+	go func() { done <- w.Close(context.Background()) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close hung after loop self-disable")
+	}
+}
+
+func TestWorkerEncodeErrorDropsBatch(t *testing.T) {
+	sender := &testutil.MockSender{}
+	obs := &countObserver{}
+	ring := ringbuf.New[int](100, 0, nil)
+	failing := func([]int) ([]byte, error) { return nil, errors.New("encode boom") }
+	w := transport.NewWorker[int](ring, sender, failing, obs, nil, nil, transport.WorkerConfig{BatchSize: 10})
+	w.Start()
+	defer func() { _ = w.Close(context.Background()) }()
+
+	ring.Push(1)
+	ring.Push(2)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if sender.Calls() != 0 {
+		t.Fatalf("a batch that fails to encode must not be sent, calls=%d", sender.Calls())
+	}
+	if obs.exhausted.Load() != 2 {
+		t.Fatalf("encode failure should drop the batch as exhausted, got %d", obs.exhausted.Load())
+	}
+}
+
 func TestWorkerCloseIdempotent(t *testing.T) {
 	sender := &testutil.MockSender{}
 	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{BatchSize: 5})

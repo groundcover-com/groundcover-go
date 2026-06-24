@@ -146,9 +146,10 @@ func NewWorker[T any](
 func (w *Worker[T]) Start() {
 	w.startOnce.Do(func() {
 		safeguard.Go(w.loop, func(info safeguard.PanicInfo) {
-			// A panicking loop self-disables rather than crash-looping.
+			// A panicking loop self-disables rather than crash-looping. The
+			// loop's own deferred close(w.stopped) has already run during
+			// unwinding, so we must not close it again here.
 			w.disabled.set(true)
-			close(w.stopped)
 			if w.obs != nil {
 				w.obs.OnSubsystemDisabled()
 			}
