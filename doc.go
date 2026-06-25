@@ -30,4 +30,19 @@
 // Errors are submitted as events; that this happens over the RUM ingestion
 // endpoint in v1 is an implementation detail that may change without affecting
 // callers (the SDK owns the path).
+//
+// # Instrumenting an existing service
+//
+// A step-by-step playbook (for humans and AI coding agents) lives in
+// docs/llm-instrumentation-guide.md in the repository. The essentials:
+//
+//   - Call Init exactly once at startup; defer CloseTimeout (or Close) on shutdown.
+//   - Capture at boundaries with CaptureError(ctx, err); keep returning the error
+//     as before — the SDK observes, it never alters control flow.
+//   - Attach identity/attributes to the request context with SetUser / WithScope.
+//   - Wrap HTTP servers with the nethttp (or contrib/gin) middleware to recover
+//     and capture panics automatically.
+//   - Pass the real error value (not a formatted string) so the type is extracted
+//     and grouping works; always thread the request context.
+//   - Scrub PII/secrets in BeforeSend; pseudonymize identity with an IdentityHasher.
 package groundcover

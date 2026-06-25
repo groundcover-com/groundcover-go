@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// globalRecloseTimeout bounds the background teardown of a previous global
+// client when Init is called more than once.
+const globalRecloseTimeout = 5 * time.Second
+
 // global holds the package-level default client used by the top-level functions
 // (Sentry style). It is the single intentional package-level mutable global in
 // the SDK; all other state is per-Client. It starts as a no-op client so the
@@ -32,13 +36,22 @@ func currentGlobal() *Client {
 }
 
 // Init configures the package-level default client. Calling it again replaces
-// the previous default; the previous client is not closed automatically.
+// the previous default and tears the old one down in the background (a bounded,
+// best-effort Close) so its worker goroutine does not leak. Init never blocks on
+// that teardown.
 func Init(cfg Config) error {
 	c, err := New(cfg)
 	if err != nil {
 		return err
 	}
-	global.Store(c)
+	prev := global.Swap(c)
+	if prev != nil && prev != c {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), globalRecloseTimeout)
+			defer cancel()
+			_ = prev.Close(ctx)
+		}()
+	}
 	return nil
 }
 

@@ -3,6 +3,10 @@
 This repository contains the groundcover Go runtime SDK. The following rules are
 **mandatory** and several of them are enforced by CI.
 
+> **Using the SDK (not contributing to it)?** This file is contributor rules. To
+> *instrument a service* with this SDK, see
+> [`docs/llm-instrumentation-guide.md`](docs/llm-instrumentation-guide.md).
+
 ## Git authorship (enforced)
 
 - **AI agents must never author commits.** The `commit-author-check` CI job fails

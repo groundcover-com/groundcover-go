@@ -2,6 +2,11 @@
 
 The official [groundcover](https://groundcover.com) runtime SDK for Go.
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/groundcover-com/groundcover-go.svg)](https://pkg.go.dev/github.com/groundcover-com/groundcover-go)
+[![CI](https://github.com/groundcover-com/groundcover-go/actions/workflows/ci.yml/badge.svg)](https://github.com/groundcover-com/groundcover-go/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/groundcover-com/groundcover-go)](go.mod)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 > **v1 scope: error tracking.** Tracing, profiling, logs, and metrics producers
 > are planned on top of the same shared core.
 
@@ -26,26 +31,37 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	groundcover "github.com/groundcover-com/groundcover-go"
 )
 
 func main() {
-	// Zero-config in-cluster: workload/env/release/pod are read from the
-	// Downward API environment. IngestionKey is optional (local sensor needs none).
+	// Workload/env/release/pod are auto-detected from the environment
+	// (Downward API). See "Getting your DSN and ingestion key" below.
 	if err := groundcover.Init(groundcover.Config{
-		DSN:          "https://<your-ingestion-origin>",
-		IngestionKey: "<ingestion-key>",
+		DSN:          "https://<tenant>.platform.grcv.io",
+		IngestionKey: "<rum-ingestion-key>",
 	}); err != nil {
 		log.Fatal(err)
 	}
-	defer groundcover.Close(context.Background()) // flush pending on shutdown
+	defer groundcover.CloseTimeout(5 * time.Second) // bounded flush on shutdown
 
 	if err := doWork(); err != nil {
 		groundcover.CaptureError(context.Background(), err)
 	}
 }
 ```
+
+### Getting your DSN and ingestion key
+
+- **`DSN`** — your BYOC ingestion origin, e.g. `https://<tenant>.platform.grcv.io`.
+  Find it in the groundcover UI under **Settings → Access → Ingestion Keys**.
+- **`IngestionKey`** — a **RUM-type** write key from the same screen
+  (**Ingestion Keys** tab → create key). It is **required** when posting to a
+  cloud/BYOC origin; capture never errors at the call site, so a missing or wrong
+  key shows up as *no data* rather than an exception. It is optional **only** when
+  `DSN` points at a local in-cluster sensor (which needs no auth).
 
 ### More usage
 

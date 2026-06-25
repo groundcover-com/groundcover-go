@@ -31,11 +31,20 @@ const (
 var ErrMissingDSN = errors.New("groundcover: DSN is required (set Config.DSN) unless Disabled is true")
 
 // Config configures a Client. The zero value is only valid when Disabled is true.
+//
+// Most callers set only DSN and IngestionKey; every other field has a sensible
+// default and is a tuning knob you can ignore until you need it.
 type Config struct {
-	// DSN is the base ingestion origin. The SDK owns the path and appends
-	// /json/rum. A missing scheme defaults to https.
+	// DSN is the base ingestion origin (e.g. https://<tenant>.platform.grcv.io
+	// for BYOC). The SDK owns the path and appends /json/rum. A missing scheme
+	// defaults to https. Find it in the groundcover UI under
+	// Settings -> Access -> Ingestion Keys.
 	DSN string
-	// IngestionKey, when set, is sent as "Authorization: Bearer <key>".
+	// IngestionKey is the write key sent as "Authorization: Bearer <key>".
+	// It is REQUIRED when posting directly to a cloud/BYOC ingestion origin
+	// (omitting it yields silent 401s, since capture never errors at the call
+	// site). It is optional ONLY when DSN points at a local in-cluster sensor,
+	// which needs no auth. Use a RUM-type ingestion key.
 	IngestionKey string
 
 	// Workload overrides service.name (env: GC_WORKLOAD / OTEL_SERVICE_NAME).
