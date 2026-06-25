@@ -21,6 +21,22 @@ compatibility table in `README.md`.
 
 - The SDK never sends raw client IP addresses; geo/IP is derived server-side.
 - `BeforeSend` is the single chokepoint for scrubbing PII/secrets before data
-  leaves the process.
+  leaves the process (it sees the finalized `*Event`; return `nil` to drop).
 - An optional keyed-HMAC `IdentityHasher` pseudonymizes `user.id` / `user.email`
   at the SDK boundary.
+
+### PII surface
+
+The SDK does **not** hard-block PII by default. Know exactly what can leave:
+
+| Field | Default handling |
+| ----- | ---------------- |
+| `user.id`, `user.email` | Pseudonymized if `Hasher` is set; otherwise sent as-is |
+| `user.name`, `user.organization` | Sent as-is — **not** covered by `Hasher` |
+| custom `Attributes`, `error_message`, `error_stacktrace` | Sent as-is unless scrubbed in `BeforeSend` |
+| client IP | Never sent (derived server-side) |
+| SDK-internal logs | Record the **type** of a recovered internal panic, not its value |
+
+If your errors or attributes may carry sensitive data, configure a `BeforeSend`
+scrubber. The optional `Debug` mode prints events *after* scrubbing/hashing, so it
+respects both `BeforeSend` and `Hasher`.

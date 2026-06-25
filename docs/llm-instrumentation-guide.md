@@ -177,8 +177,27 @@ r := gin.New()
 r.Use(gcgin.Middleware()) // recovers panics, captures c.Errors, seeds a scope
 ```
 
-The middleware clones a fresh scope into each request's context, so handler code
-can call `SetUser`/`WithScope` on `r.Context()` without leaking across requests.
+The middleware seeds a fresh, isolated scope into each request's context, so
+handler code can call `SetUser`/`WithScope` on `r.Context()` and the captured
+error sees it — no need to thread the returned context back, and nothing leaks
+across requests.
+
+### Middleware composition (order matters)
+
+- **Gin:** register a recovery middleware **before** `gcgin.Middleware()`, or use
+  `gin.Default()` (which includes `gin.Recovery()`). Our middleware re-raises the
+  panic after capturing; if nothing downstream recovers it, Gin aborts the
+  connection instead of returning 500.
+
+  ```go
+  r := gin.New()
+  r.Use(gin.Recovery())      // must be registered before ours
+  r.Use(gcgin.Middleware())
+  ```
+
+- **Don't double-wrap:** wrapping a Gin engine in `nethttp.Middleware` *and* using
+  `gcgin.Middleware()` captures the same panic twice unless a terminating
+  `gin.Recovery()` sits between the layers. Pick one middleware per server.
 
 ## 6. Non-error notices
 
@@ -215,6 +234,53 @@ defer groundcover.FlushTimeout(2 * time.Second)
 `FlushTimeout`/`CloseTimeout` are convenience wrappers; `Flush(ctx)`/`Close(ctx)`
 remain the primitives when you need cancellation or to compose with an existing
 context.
+
+## 9. Local debugging — see captured events
+
+Set `Debug: true` to print each captured event to stderr in a compact, readable
+form. It runs *after* scrubbing/hashing, so it honors `BeforeSend` and `Hasher`,
+and it does not affect delivery.
+
+```go
+groundcover.Init(groundcover.Config{DSN: dsn, Debug: true})
+// [groundcover] error exception  *net.OpError: connection refused
+//   fingerprint=836b… handled=true
+//   user: id=u-123 org=acme
+//   attrs: amount=42.5 order_id=o-9
+//   stack:
+//     main.charge (/app/checkout.go:42)
+```
+
+## 10. Testing your instrumentation
+
+`BeforeSend` is the blessed in-process test seam: it receives the finalized
+`*Event`, so you can assert on captures without any network. Record and drop:
+
+```go
+var got []*groundcover.Event
+groundcover.Init(groundcover.Config{
+	DSN:        "https://example.invalid",
+	BeforeSend: func(e *groundcover.Event) *groundcover.Event { got = append(got, e); return nil },
+})
+// ... exercise code, then assert on got ...
+```
+
+For wire-level assertions, inject a custom `Config.HTTPClient` and inspect the
+gzipped JSON body.
+
+## PII surface (know what leaves the process)
+
+The SDK does not block PII by default (matching Sentry). What it does:
+
+- **`Hasher`** pseudonymizes **only `user.id` and `user.email`**. It does **not**
+  touch `user.name`, `user.organization`, custom attributes, or error messages.
+- **`BeforeSend`** is the one place to scrub everything else — `ErrorMessage`,
+  `Attributes`, `error_stacktrace`, and any identity field. Return `nil` to drop.
+- Raw client IPs are never sent (geo/IP is derived server-side).
+- SDK-internal logs record the **type** of a recovered internal panic, not its
+  value, to avoid leaking data.
+
+If your errors or attributes may carry PII, write a `BeforeSend` scrubber.
 
 ---
 
