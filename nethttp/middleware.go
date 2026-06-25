@@ -33,12 +33,16 @@ func Middleware(next http.Handler, opts ...Option) http.Handler {
 		o(&cfg)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := withScope(r.Context(), cfg.client)
+		// Seed a fresh, isolated scope for this request. Because the scope is
+		// mutable and shared, a handler's SetUser/WithScope on r.Context() is
+		// visible to the capture below without threading a new context back.
+		ctx := seedScope(r.Context(), cfg.client)
 		r = r.WithContext(ctx)
 
+		//nolint:contextcheck // capture must read the request context at panic time, not entry time
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(ctx, cfg.client, rec, requestAttributes(r))
+				captureRecovered(r.Context(), cfg.client, rec, requestAttributes(r))
 				panic(rec) // re-raise: net/http handles handler panics per request
 			}
 		}()
@@ -56,13 +60,13 @@ func requestAttributes(r *http.Request) groundcover.Option {
 	})
 }
 
-// withScope clones a fresh scope into ctx using the chosen client (or global).
-func withScope(ctx context.Context, client *groundcover.Client) context.Context {
-	noop := func(*groundcover.Scope) {}
+// seedScope installs a fresh, isolated request scope using the chosen client
+// (or the global one).
+func seedScope(ctx context.Context, client *groundcover.Client) context.Context {
 	if client != nil {
-		return client.WithScope(ctx, noop)
+		return client.WithIsolatedScope(ctx)
 	}
-	return groundcover.WithScope(ctx, noop)
+	return groundcover.WithIsolatedScope(ctx)
 }
 
 // captureRecovered dispatches a recovered panic to the chosen client (or global).

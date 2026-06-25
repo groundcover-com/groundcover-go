@@ -3,7 +3,9 @@ package groundcover
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +36,9 @@ type Client struct {
 
 	ring   *ringbuf.Buffer[*Event]
 	worker *transport.Worker[*Event]
+
+	debug    bool
+	debugOut io.Writer
 }
 
 // New constructs an explicit Client. A Disabled config yields a no-op client.
@@ -63,8 +68,13 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	})
 	c.onPanic = func(info safeguard.PanicInfo) {
 		c.metrics.IncPanicsRecovered()
-		c.throttle.Log(logthrottle.LevelError, fmt.Sprintf("recovered SDK-internal panic: %v", info.Value))
+		// Log the panic's type, not its value, to avoid leaking data into
+		// SDK-internal logs.
+		c.throttle.Log(logthrottle.LevelError, fmt.Sprintf("recovered SDK-internal panic (%T)", info.Value))
 	}
+
+	c.debug = resolved.Debug
+	c.debugOut = os.Stderr
 
 	c.ring = ringbuf.New[*Event](resolved.MaxQueue, resolved.MaxBytes, estimateSize)
 
@@ -214,6 +224,7 @@ func (c *Client) newPanicEvent(recovered any) *Event {
 		Timestamp:    time.Now(),
 		Type:         eventType,
 		Level:        LevelFatal,
+		levelLocked:  true, // a recovered panic is fatal; scope must not downgrade it
 		ErrorHandled: false,
 		ErrorType:    etype,
 		ErrorMessage: emsg,
@@ -267,8 +278,21 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 	// estimated on fully-expanded values.
 	e.Attributes = sanitizeAttributes(e.Attributes)
 
+	if c.debug {
+		c.writeDebug(e)
+	}
+
 	c.metrics.IncCaptured()
 	c.enqueue(cfg, e)
+}
+
+// writeDebug renders the finalized event to the debug writer, guarded so it can
+// never affect capture.
+func (c *Client) writeDebug(e *Event) {
+	if c.debugOut == nil {
+		return
+	}
+	safeguard.Do(func() { _, _ = io.WriteString(c.debugOut, renderDebug(e)) }, c.onPanic)
 }
 
 // runBeforeSend invokes the user callback inside a panic guard. A panic is
@@ -299,20 +323,30 @@ func (c *Client) fireOnDrop(fn func(int), n int) {
 	safeguard.Do(func() { fn(n) }, c.onPanic)
 }
 
-// SetUser returns a context with the identity set on a fresh request scope.
+// SetUser sets the identity on the request scope and returns the context. If the
+// context already carries a scope (e.g. one installed by middleware) it is
+// mutated in place, so the change is visible to whoever else holds that context.
 func (c *Client) SetUser(ctx context.Context, u User) context.Context {
-	newCtx, sc := cloneScopeIntoContext(ctx)
+	newCtx, sc := ensureScope(ctx)
 	sc.SetUser(u)
 	return newCtx
 }
 
-// WithScope returns a context with a cloned scope, after applying fn to it.
+// WithScope applies fn to the request scope and returns the context. As with
+// SetUser, an existing scope on the context is mutated in place.
 func (c *Client) WithScope(ctx context.Context, fn func(*Scope)) context.Context {
-	newCtx, sc := cloneScopeIntoContext(ctx)
+	newCtx, sc := ensureScope(ctx)
 	if fn != nil {
 		safeguard.Do(func() { fn(sc) }, c.onPanic)
 	}
 	return newCtx
+}
+
+// WithIsolatedScope returns a context carrying a fresh, isolated copy of the
+// current scope. Middleware uses it at the start of each request so per-request
+// identity/attributes set by handlers never leak across requests.
+func (c *Client) WithIsolatedScope(ctx context.Context) context.Context {
+	return isolatedScopeContext(ctx)
 }
 
 // Flush blocks until pending events are delivered or ctx expires.

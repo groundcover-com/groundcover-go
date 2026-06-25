@@ -1,6 +1,7 @@
 package groundcover
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -167,6 +168,89 @@ func TestCaptureMessageLevelBeatsScope(t *testing.T) {
 
 	if got := decodePayload(t, sender).Events[0].Level; got != string(LevelError) {
 		t.Fatalf("per-call level must beat scope, got %q", got)
+	}
+}
+
+// TestScopeDoesNotDowngradePanicLevel verifies a recovered panic stays Fatal
+// even when the request scope sets a lower level.
+func TestScopeDoesNotDowngradePanicLevel(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{}, sender)
+
+	ctx := c.WithScope(context.Background(), func(s *Scope) { s.SetLevel(LevelWarning) })
+	c.CaptureRecovered(ctx, errors.New("kaboom"))
+	_ = c.Flush(context.Background())
+
+	if got := decodePayload(t, sender).Events[0].Level; got != string(LevelFatal) {
+		t.Fatalf("scope must not downgrade a panic from fatal, got %q", got)
+	}
+}
+
+// TestScopeStillSetsLevelForNonPanic confirms scope level still applies to a
+// normal (non-locked) event.
+func TestScopeStillSetsLevelForNonPanic(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{}, sender)
+	ctx := c.WithScope(context.Background(), func(s *Scope) { s.SetLevel(LevelWarning) })
+	c.CaptureError(ctx, errors.New("e"))
+	_ = c.Flush(context.Background())
+	if got := decodePayload(t, sender).Events[0].Level; got != string(LevelWarning) {
+		t.Fatalf("scope level should apply to a normal error, got %q", got)
+	}
+}
+
+// TestSharedScopeMutationVisibleToCapture verifies that mutating the scope on a
+// context after deriving it (as middleware + handler do) is seen at capture,
+// without threading the returned context back.
+func TestSharedScopeMutationVisibleToCapture(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{}, sender)
+
+	reqCtx := c.WithIsolatedScope(context.Background()) // middleware seeds
+	c.SetUser(reqCtx, User{ID: "handler-user"})         // handler mutates; return ignored
+	c.CaptureError(reqCtx, errors.New("e"))             // capture uses the same ctx
+	_ = c.Flush(context.Background())
+
+	if got := decodePayload(t, sender).Events[0].Attributes.ErrorMetadata["user.id"]; got != "handler-user" {
+		t.Fatalf("scope mutation should be visible at capture without re-threading, got %v", got)
+	}
+}
+
+func TestDebugModeHonorsScrubbing(t *testing.T) {
+	var buf bytes.Buffer
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{Debug: true, Hasher: NewHMACHasher([]byte("k"))}, sender)
+	c.debugOut = &buf
+
+	ctx := c.SetUser(context.Background(), User{ID: "secret-user-id"})
+	c.CaptureError(ctx, errors.New("boom"))
+	_ = c.Flush(context.Background())
+
+	out := buf.String()
+	if out == "" {
+		t.Fatal("debug mode should write the event")
+	}
+	if strings.Contains(out, "secret-user-id") {
+		t.Fatalf("debug output must honor identity hashing, leaked raw id:\n%s", out)
+	}
+	if !strings.Contains(out, "[groundcover]") || !strings.Contains(out, "boom") {
+		t.Fatalf("debug output missing expected content:\n%s", out)
+	}
+}
+
+func TestRenderDebug(t *testing.T) {
+	e := &Event{
+		Level: LevelError, Type: "exception", Title: "*x.E: boom",
+		Fingerprint: "fp", ErrorHandled: true,
+		User:       User{ID: "u-1", Organization: "acme"},
+		Attributes: Attributes{"order_id": "o-9"},
+		Stacktrace: []Frame{{Function: "main.run", File: "/app/main.go", Line: 10}},
+	}
+	out := renderDebug(e)
+	for _, want := range []string{"[groundcover] error exception", "*x.E: boom", "fingerprint=fp", "id=u-1", "order_id=o-9", "main.run"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("renderDebug missing %q in:\n%s", want, out)
+		}
 	}
 }
 

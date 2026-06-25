@@ -94,10 +94,16 @@ func SetUser(ctx context.Context, u User) context.Context {
 	return currentGlobal().SetUser(ctx, u)
 }
 
-// WithScope returns a context with a cloned, mutated scope, using the
-// package-level client.
+// WithScope applies fn to the request scope (mutating an existing scope in
+// place), using the package-level client.
 func WithScope(ctx context.Context, fn func(*Scope)) context.Context {
 	return currentGlobal().WithScope(ctx, fn)
+}
+
+// WithIsolatedScope returns a context with a fresh, isolated copy of the current
+// scope, using the package-level client. Middleware uses it at request boundaries.
+func WithIsolatedScope(ctx context.Context) context.Context {
+	return currentGlobal().WithIsolatedScope(ctx)
 }
 
 // Flush flushes the package-level client.

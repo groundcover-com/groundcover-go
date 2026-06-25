@@ -41,12 +41,14 @@ func Middleware(opts ...Option) gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
-		ctx := withScope(c.Request.Context(), cfg.client)
-		c.Request = c.Request.WithContext(ctx)
+		// Seed a fresh, isolated scope for this request. The scope is mutable and
+		// shared, and we re-read c.Request.Context() at capture time, so a
+		// handler's SetUser/WithScope is reflected in the captured error.
+		c.Request = c.Request.WithContext(seedScope(c.Request.Context(), cfg.client))
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(ctx, cfg.client, rec, requestAttributes(c))
+				captureRecovered(c.Request.Context(), cfg.client, rec, requestAttributes(c))
 				panic(rec) // re-raise to Gin's recovery / the server
 			}
 		}()
@@ -55,7 +57,7 @@ func Middleware(opts ...Option) gin.HandlerFunc {
 
 		if cfg.captureError {
 			for _, e := range c.Errors {
-				captureError(ctx, cfg.client, e.Err, requestAttributes(c))
+				captureError(c.Request.Context(), cfg.client, e.Err, requestAttributes(c))
 			}
 		}
 	}
@@ -70,12 +72,11 @@ func requestAttributes(c *gin.Context) groundcover.Option {
 	})
 }
 
-func withScope(ctx context.Context, client *groundcover.Client) context.Context {
-	noop := func(*groundcover.Scope) {}
+func seedScope(ctx context.Context, client *groundcover.Client) context.Context {
 	if client != nil {
-		return client.WithScope(ctx, noop)
+		return client.WithIsolatedScope(ctx)
 	}
-	return groundcover.WithScope(ctx, noop)
+	return groundcover.WithIsolatedScope(ctx)
 }
 
 func captureRecovered(ctx context.Context, client *groundcover.Client, rec any, opts ...groundcover.Option) {

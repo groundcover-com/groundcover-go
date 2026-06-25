@@ -63,6 +63,46 @@ func TestMiddlewareCapturesAndReRaises(t *testing.T) {
 	}
 }
 
+// recorderClient returns a client whose BeforeSend records the finalized event
+// (then drops it, so there is no network I/O).
+func recorderClient(t *testing.T, rec *groundcover.Event) *groundcover.Client {
+	t.Helper()
+	c, err := groundcover.New(groundcover.Config{
+		DSN:           "https://example.invalid",
+		FlushInterval: time.Hour,
+		BeforeSend: func(e *groundcover.Event) *groundcover.Event {
+			*rec = *e
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	return c
+}
+
+func TestMiddlewareCapturesHandlerSetUser(t *testing.T) {
+	var rec groundcover.Event
+	client := recorderClient(t, &rec)
+
+	// The handler sets the user on the request context WITHOUT threading the
+	// returned context back, then panics. The capture must still see the user.
+	h := nethttp.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		client.SetUser(r.Context(), groundcover.User{ID: "handler-user", Organization: "acme"})
+		panic("boom")
+	}), nethttp.WithClient(client))
+
+	func() {
+		defer func() { _ = recover() }()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
+	}()
+
+	if rec.User.ID != "handler-user" || rec.User.Organization != "acme" {
+		t.Fatalf("handler-set scope was not visible at capture: %+v", rec.User)
+	}
+}
+
 func TestMiddlewareSeedsScope(t *testing.T) {
 	client := newDropClient(t)
 	var hadScope bool

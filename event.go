@@ -62,6 +62,11 @@ type Event struct {
 	Attributes Attributes
 	// Resource is the detected resource/spine attributes (telemetry.sdk.*, k8s.*, ...).
 	Resource map[string]string
+
+	// levelLocked marks an intrinsically-severe event (a recovered panic) whose
+	// Level must not be downgraded by a request scope. Per-call options may still
+	// change it.
+	levelLocked bool
 }
 
 // Option mutates an Event before it is enqueued. Options are applied last and

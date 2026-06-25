@@ -1,11 +1,20 @@
 package groundcover
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // Scope holds request-level data merged into every event captured with the
 // owning context. It sits between global defaults and per-call options in the
 // merge precedence.
+//
+// A Scope is mutable and safe for concurrent use. Middleware installs one fresh,
+// isolated Scope per request (see WithIsolatedScope); handlers then mutate that
+// same Scope through SetUser / WithScope, and the captured event observes those
+// changes without the handler having to thread a new context back.
 type Scope struct {
+	mu          sync.Mutex
 	user        User
 	attributes  Attributes
 	level       Level
@@ -15,10 +24,16 @@ type Scope struct {
 }
 
 // SetUser sets the identity on the scope.
-func (s *Scope) SetUser(u User) { s.user = u }
+func (s *Scope) SetUser(u User) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.user = u
+}
 
 // SetAttributes merges attributes into the scope.
 func (s *Scope) SetAttributes(a Attributes) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.attributes == nil {
 		s.attributes = make(Attributes, len(a))
 	}
@@ -27,29 +42,50 @@ func (s *Scope) SetAttributes(a Attributes) {
 
 // SetAttribute sets a single attribute on the scope.
 func (s *Scope) SetAttribute(key string, value any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.attributes == nil {
 		s.attributes = make(Attributes, 1)
 	}
 	s.attributes[key] = value
 }
 
-// SetLevel sets the default severity for events in this scope.
-func (s *Scope) SetLevel(l Level) { s.level = l }
+// SetLevel sets the default severity for events in this scope. Note that the
+// scope level never downgrades an intrinsically-fatal event (a recovered panic).
+func (s *Scope) SetLevel(l Level) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.level = l
+}
 
 // SetFingerprint overrides the grouping fingerprint for events in this scope.
-func (s *Scope) SetFingerprint(fp string) { s.fingerprint = fp }
+func (s *Scope) SetFingerprint(fp string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fingerprint = fp
+}
 
 // SetSessionID sets the session identifier for events in this scope.
-func (s *Scope) SetSessionID(id string) { s.sessionID = id }
+func (s *Scope) SetSessionID(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionID = id
+}
 
 // SetAnonymousID sets the pre-auth anonymous identifier for events in this scope.
-func (s *Scope) SetAnonymousID(id string) { s.anonymousID = id }
+func (s *Scope) SetAnonymousID(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.anonymousID = id
+}
 
-// clone returns a deep copy of the scope.
+// clone returns a deep copy of the scope (without the source's lock state).
 func (s *Scope) clone() *Scope {
 	if s == nil {
 		return &Scope{}
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return &Scope{
 		user:        s.user,
 		attributes:  s.attributes.clone(),
@@ -66,6 +102,8 @@ func (s *Scope) applyTo(e *Event) {
 	if s == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !s.user.isZero() {
 		e.User = s.user
 	}
@@ -75,7 +113,9 @@ func (s *Scope) applyTo(e *Event) {
 		}
 		e.Attributes.merge(s.attributes)
 	}
-	if s.level.valid() {
+	// A scope level fills in / overrides the default, but must never downgrade
+	// an intrinsically-fatal event (a recovered panic).
+	if s.level.valid() && !e.levelLocked {
 		e.Level = s.level
 	}
 	if s.fingerprint != "" {
@@ -109,9 +149,20 @@ func contextWithScope(ctx context.Context, sc *Scope) context.Context {
 	return context.WithValue(ctx, scopeKey{}, sc)
 }
 
-// cloneScopeIntoContext returns a context with a fresh copy of the current scope
-// so callers can mutate it without affecting parent contexts.
-func cloneScopeIntoContext(ctx context.Context) (context.Context, *Scope) {
-	sc := scopeFromContext(ctx).clone()
+// ensureScope returns the scope already attached to ctx (so mutations are
+// visible to whoever else holds the context), creating and attaching a fresh one
+// if there is none.
+func ensureScope(ctx context.Context) (context.Context, *Scope) {
+	if sc := scopeFromContext(ctx); sc != nil {
+		return ctx, sc
+	}
+	sc := &Scope{}
 	return contextWithScope(ctx, sc), sc
+}
+
+// isolatedScopeContext returns a context carrying a fresh, isolated copy of the
+// current scope. Used at request boundaries so per-request mutations never leak
+// across requests.
+func isolatedScopeContext(ctx context.Context) context.Context {
+	return contextWithScope(ctx, scopeFromContext(ctx).clone())
 }

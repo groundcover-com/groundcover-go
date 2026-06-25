@@ -69,6 +69,36 @@ func TestGinCapturesContextErrors(t *testing.T) {
 	}
 }
 
+func TestGinCapturesHandlerSetUser(t *testing.T) {
+	var rec groundcover.Event
+	client, err := groundcover.New(groundcover.Config{
+		DSN:           "https://example.invalid",
+		FlushInterval: time.Hour,
+		BeforeSend: func(e *groundcover.Event) *groundcover.Event {
+			rec = *e
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+
+	r := newEngine(client)
+	r.GET("/err", func(c *gin.Context) {
+		// Handler sets the user on the request context, then records an error.
+		client.SetUser(c.Request.Context(), groundcover.User{ID: "gin-user"})
+		_ = c.Error(errors.New("handler error"))
+		c.Status(http.StatusInternalServerError)
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/err", nil))
+
+	if rec.User.ID != "gin-user" {
+		t.Fatalf("handler-set scope was not visible at capture: %+v", rec.User)
+	}
+}
+
 func TestGinHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	r := newEngine(client)

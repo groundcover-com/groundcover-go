@@ -72,7 +72,7 @@ func TestContextScopeRoundTrip(t *testing.T) {
 	if scopeFromContext(nil) != nil { //nolint:staticcheck // explicitly testing nil ctx
 		t.Fatal("nil context should yield nil scope")
 	}
-	ctx, sc := cloneScopeIntoContext(context.Background())
+	ctx, sc := ensureScope(context.Background())
 	sc.SetUser(User{ID: "x"})
 	got := scopeFromContext(ctx)
 	if got == nil || got.user.ID != "x" {
