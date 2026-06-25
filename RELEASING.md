@@ -4,7 +4,7 @@ The repository is a Go **multi-module** workspace: the core module at the root
 plus nested modules that depend on it (`contrib/gin`, `prometheus`, `examples`).
 During development those nested modules resolve the core via a local `replace`:
 
-```
+```text
 require github.com/groundcover-com/groundcover-go v0.0.0
 replace github.com/groundcover-com/groundcover-go => ../   (or ../../)
 ```

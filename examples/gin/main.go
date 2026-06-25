@@ -23,9 +23,10 @@ import (
 
 func main() {
 	if err := groundcover.Init(groundcover.Config{
-		DSN:         envOr("GC_DSN", "https://example.invalid"),
-		ServiceName: "examples-gin",
-		Env:         "examples",
+		DSN:          envOr("GC_DSN", "https://example.invalid"),
+		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
+		ServiceName:  "examples-gin",
+		Env:          "examples",
 	}); err != nil {
 		fatalf("init: %v", err)
 	}

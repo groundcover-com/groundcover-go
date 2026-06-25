@@ -11,12 +11,16 @@ permissions:
 env:
   GO_FLOOR: "1.25"
 
+# Actions are pinned to commit SHAs (with the human-readable tag in a comment);
+# Dependabot keeps them current. See SECURITY.md / the repo ruleset.
+
 jobs:
   commit-author-check:
     name: commit-author-check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # No persist-credentials override: the script fetches the base branch.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
       - name: Reject AI-authored commits
@@ -31,8 +35,10 @@ jobs:
         go: ["1.25", "1.26"]
         goarch: ["amd64", "arm64"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
@@ -50,11 +56,13 @@ jobs:
       matrix:
         dir: [".", "prometheus", "contrib/gin", "examples"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_FLOOR }}
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
           version: v2.12.2
           working-directory: ${{ matrix.dir }}
@@ -67,8 +75,10 @@ jobs:
       matrix:
         go: ["1.25", "1.26"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
@@ -84,8 +94,10 @@ jobs:
         module: ["prometheus", "contrib/gin", "examples"]
         go: ["1.25", "1.26"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
@@ -103,8 +115,10 @@ jobs:
       matrix:
         dir: [".", "prometheus", "contrib/gin", "examples"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_FLOOR }}
       - name: Run govulncheck
@@ -113,8 +127,8 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
-# CodeQL code scanning is enabled via GitHub's *default setup* (Settings →
-# Code security → CodeQL analysis), which requires GitHub Advanced Security on
+# CodeQL code scanning is enabled via GitHub's *default setup* (Settings ->
+# Code security -> CodeQL analysis), which requires GitHub Advanced Security on
 # the repository. It is intentionally not defined as an advanced workflow job
 # here: running both default setup and an advanced workflow causes a
 # configuration error, and an advanced job fails outright when Advanced Security

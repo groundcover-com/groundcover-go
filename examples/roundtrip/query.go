@@ -145,6 +145,7 @@ func verifyEvent(raw []byte, testID string) error {
 		"error_metadata.user.id":        "roundtrip-user",
 		"error_metadata.example.string": "hello",
 		"error_metadata.example.bool":   "true",
+		"error_metadata.example.int":    "7",
 	}
 	for k, want := range checks {
 		if got := e.StringAttributes[k]; got != want {
@@ -154,8 +155,14 @@ func verifyEvent(raw []byte, testID string) error {
 	if title := e.StringAttributes["error_metadata.gc.title"]; !strings.Contains(title, "synthetic roundtrip error") {
 		return fmt.Errorf("error_metadata.gc.title = %q, missing message", title)
 	}
-	if got := e.FloatAttributes["error_metadata.example.float"]; got != 3.14 {
-		return fmt.Errorf("float_attributes[example.float] = %v, want 3.14", got)
+	// Numbers are also routed to the float bucket.
+	for k, want := range map[string]float64{
+		"error_metadata.example.float": 3.14,
+		"error_metadata.example.int":   7,
+	} {
+		if got := e.FloatAttributes[k]; got != want {
+			return fmt.Errorf("float_attributes[%q] = %v, want %v", k, got, want)
+		}
 	}
 	return nil
 }
