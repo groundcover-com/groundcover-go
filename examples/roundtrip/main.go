@@ -81,6 +81,11 @@ func run() error {
 	}
 	fmt.Println("roundtrip: fetched event from the events API:")
 	fmt.Println(prettyJSON(event))
+
+	if err := verifyEvent(event, testID); err != nil {
+		return fmt.Errorf("read-back content mismatch: %w", err)
+	}
+	fmt.Println("roundtrip: read-back content verified")
 	return nil
 }
 

@@ -22,6 +22,27 @@ can therefore call it freely without defensive wrapping.
 - Merge precedence is deterministic: **process defaults (Init) < request scope
   (ctx) < per-call options**.
 
+## Guarantees (what you can rely on)
+
+These are the usage-side contracts; each is covered by an integration test:
+
+- **Capture never blocks and never panics the host.** Even against a dead/slow
+  backend, `CaptureError`/`CaptureMessage`/`Recover` return immediately.
+- **Control flow is unchanged.** Captured errors are still yours to return;
+  panics are re-raised (the SDK observes, it never swallows).
+- **Request scope flows through.** Identity/attributes set by a handler on the
+  request context (directly or via middleware) appear on the captured event —
+  no need to thread the returned context back.
+- **Per-request isolation.** One request's identity never leaks into another's
+  event.
+- **Panics are fatal.** A recovered panic is captured `handled=false` at fatal
+  severity and a scope level cannot downgrade it.
+- **Memory is bounded.** Overflow drops the oldest events (and is counted); it
+  never grows unbounded or applies backpressure to the caller.
+- **`Disabled: true` does zero I/O.**
+- **PII:** only `user.id`/`user.email` are hashed (with a `Hasher`); scrub
+  anything else via `BeforeSend`. See the PII surface section below.
+
 ---
 
 ## 1. Add the dependency

@@ -119,6 +119,47 @@ func searchEvents(env environment, gcql string) ([]json.RawMessage, error) {
 	return sr.Data, nil
 }
 
+// storedEvent is the subset of the events-API row we assert on.
+type storedEvent struct {
+	Type             string             `json:"type"`
+	Category         string             `json:"category"`
+	StringAttributes map[string]string  `json:"string_attributes"`
+	FloatAttributes  map[string]float64 `json:"float_attributes"`
+}
+
+// verifyEvent checks that the fetched event carries the fields the SDK sent:
+// type/category, the needle, the readable title, handled flag, identity, and one
+// custom attribute of each type. It validates the wire contract end-to-end, not
+// just that an event exists.
+func verifyEvent(raw []byte, testID string) error {
+	var e storedEvent
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return fmt.Errorf("decode event: %w", err)
+	}
+	if e.Type != "exception" || e.Category != "rum" {
+		return fmt.Errorf("type/category = %q/%q, want exception/rum", e.Type, e.Category)
+	}
+	checks := map[string]string{
+		"error_metadata.gc.test_id":     testID,
+		"error_handled":                 "true",
+		"error_metadata.user.id":        "roundtrip-user",
+		"error_metadata.example.string": "hello",
+		"error_metadata.example.bool":   "true",
+	}
+	for k, want := range checks {
+		if got := e.StringAttributes[k]; got != want {
+			return fmt.Errorf("string_attributes[%q] = %q, want %q", k, got, want)
+		}
+	}
+	if title := e.StringAttributes["error_metadata.gc.title"]; !strings.Contains(title, "synthetic roundtrip error") {
+		return fmt.Errorf("error_metadata.gc.title = %q, missing message", title)
+	}
+	if got := e.FloatAttributes["error_metadata.example.float"]; got != 3.14 {
+		return fmt.Errorf("float_attributes[example.float] = %v, want 3.14", got)
+	}
+	return nil
+}
+
 // prettyJSON re-indents raw JSON for human-readable output.
 func prettyJSON(raw []byte) string {
 	var buf bytes.Buffer
