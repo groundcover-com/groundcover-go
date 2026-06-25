@@ -19,5 +19,8 @@ coverage.out
 .vscode/
 .DS_Store
 
-# Compiled trainer binary
-/_testdata/trainer/trainer
+# Compiled example binaries
+/examples/basic/basic
+/examples/nethttp/nethttp
+/examples/gin/gin
+/examples/roundtrip/roundtrip

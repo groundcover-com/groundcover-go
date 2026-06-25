@@ -39,6 +39,19 @@ updates:
         update-types:
           - version-update:semver-major
 
+  - package-ecosystem: gomod
+    directory: "/examples"
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

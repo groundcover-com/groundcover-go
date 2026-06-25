@@ -58,18 +58,18 @@ tidy: ## Tidy and vendor the core module dependencies.
 	$(GO) mod tidy
 	@if [ -d vendor ]; then $(GO) mod vendor; fi
 
-NESTED_MODULES := prometheus contrib/gin _testdata/trainer
+NESTED_MODULES := prometheus contrib/gin examples
 
 .PHONY: modules
-modules: ## Build and test the nested modules (contrib, prometheus, trainer).
+modules: ## Build and test the nested modules (contrib, prometheus, examples).
 	@for m in $(NESTED_MODULES); do \
 		echo "==> $$m"; \
 		( cd $$m && $(GO) build ./... && $(GO) test ./... ) || exit 1; \
 	done
 
-.PHONY: trainer
-trainer: ## Run the live round-trip trainer (requires GC_* env vars).
-	cd _testdata/trainer && $(GO) run .
+.PHONY: roundtrip
+roundtrip: ## Run the live end-to-end round-trip example (requires GC_* env vars).
+	cd examples/roundtrip && $(GO) run .
 
 .PHONY: help
 help: ## Show this help.

@@ -22,8 +22,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-      - name: Run trainer
-        working-directory: _testdata/trainer
+      - name: Run round-trip example
+        working-directory: examples/roundtrip
         env:
           GC_DSN: ${{ secrets.GC_DSN }}
           GC_INGESTION_KEY: ${{ secrets.GC_INGESTION_KEY }}

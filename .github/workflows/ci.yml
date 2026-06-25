@@ -76,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: ["prometheus", "contrib/gin", "_testdata/trainer"]
+        module: ["prometheus", "contrib/gin", "examples"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

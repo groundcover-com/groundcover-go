@@ -47,10 +47,15 @@ func main() {
 }
 ```
 
-See [`example_test.go`](example_test.go) for more usage, including users, custom
-attributes, panic recovery, and HTTP middleware. For a step-by-step guide aimed
-at AI coding agents (and humans) instrumenting an existing service, see
-[`docs/llm-instrumentation-guide.md`](docs/llm-instrumentation-guide.md).
+### More usage
+
+- **[`examples/`](examples)** — runnable programs: `basic`, `nethttp`, `gin`, and
+  an end-to-end `roundtrip` that submits an error and queries it back. Run e.g.
+  `cd examples && go run ./basic`.
+- **[`example_test.go`](example_test.go)** — API-level snippets rendered on pkg.go.dev.
+- **[`docs/llm-instrumentation-guide.md`](docs/llm-instrumentation-guide.md)** — a
+  step-by-step guide for AI coding agents (and humans) instrumenting an existing
+  service.
 
 ## Design principles
 
@@ -93,8 +98,9 @@ pin an older SDK release if you run an older Go.
 ## Development
 
 ```bash
-make ci        # build + vet + lint + race tests — the gate for every change
-make trainer   # live round-trip against a real backend (requires GC_* env vars)
+make ci          # build + vet + lint + race tests — the gate for every change
+make modules     # build + test the nested modules (contrib, prometheus, examples)
+make roundtrip   # live end-to-end example against a real backend (requires GC_* env vars)
 ```
 
 AI agents must never author commits; see [`AGENTS.md`](AGENTS.md).

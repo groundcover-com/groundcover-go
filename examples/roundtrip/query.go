@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// environment holds the resolved trainer configuration.
+// environment holds the resolved configuration read from the GC_* variables.
 type environment struct {
 	dsn          string
 	ingestionKey string
@@ -59,7 +59,6 @@ func normalizeURL(u string) string {
 	return u
 }
 
-// searchRequest is the events search request body.
 type searchRequest struct {
 	Query string `json:"query"`
 	Start string `json:"start"`
@@ -67,14 +66,13 @@ type searchRequest struct {
 	Limit int    `json:"limit"`
 }
 
-// searchResponse is the subset of the events search response we care about.
 type searchResponse struct {
 	Data []json.RawMessage `json:"data"`
 }
 
 // searchEvents runs a gcQL query against the events search API and returns the
-// number of matching events.
-func searchEvents(env environment, gcql string) (int, error) {
+// matching events as raw JSON.
+func searchEvents(env environment, gcql string) ([]json.RawMessage, error) {
 	now := time.Now().UTC()
 	body, err := json.Marshal(searchRequest{
 		Query: gcql,
@@ -83,7 +81,7 @@ func searchEvents(env environment, gcql string) (int, error) {
 		Limit: 10,
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
@@ -91,7 +89,7 @@ func searchEvents(env environment, gcql string) (int, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, env.apiURL+"/api/k8s/v3/events/search", bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+env.apiKey)
@@ -102,30 +100,39 @@ func searchEvents(env environment, gcql string) (int, error) {
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("events API status %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return nil, fmt.Errorf("events API status %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
 	var sr searchResponse
 	if err := json.Unmarshal(payload, &sr); err != nil {
-		return 0, fmt.Errorf("decode response: %w", err)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	return len(sr.Data), nil
+	return sr.Data, nil
+}
+
+// prettyJSON re-indents raw JSON for human-readable output.
+func prettyJSON(raw []byte) string {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+		return string(raw)
+	}
+	return buf.String()
 }
 
 // newID returns a random UUIDv4 string used as the needle.
 func newID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("trainer-%d", time.Now().UnixNano())
+		return fmt.Sprintf("roundtrip-%d", time.Now().UnixNano())
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80

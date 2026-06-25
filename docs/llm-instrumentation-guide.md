@@ -246,5 +246,5 @@ context.
 - Build still compiles and `go vet ./...` is clean.
 - Capture sites pass a `context.Context` and the original `error`.
 - `Init` is reachable on startup; `Close`/`Flush` runs on shutdown.
-- For a live check, see the trainer under `_testdata/trainer`: it submits a
-  synthetic error and polls the events API for it.
+- For a live check, see [`examples/roundtrip`](../examples/roundtrip): it submits a
+  synthetic error and polls the events API until it reads the event back.
