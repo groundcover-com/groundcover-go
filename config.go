@@ -86,6 +86,10 @@ type Config struct {
 	Logger Logger
 	// Disabled makes the client a no-op with near-zero overhead.
 	Disabled bool
+	// Debug prints each captured event to stderr in a compact, readable form
+	// (after scrubbing/hashing), for local development. It does not affect
+	// delivery. Leave off in production.
+	Debug bool
 
 	// HTTPClient overrides the HTTP client used for delivery. Primarily a test
 	// seam; nil uses a client with sensible timeouts.
