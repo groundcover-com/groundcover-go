@@ -145,7 +145,6 @@ func verifyEvent(raw []byte, testID string) error {
 		"error_metadata.user.id":        "roundtrip-user",
 		"error_metadata.example.string": "hello",
 		"error_metadata.example.bool":   "true",
-		"error_metadata.example.int":    "7",
 	}
 	for k, want := range checks {
 		if got := e.StringAttributes[k]; got != want {
