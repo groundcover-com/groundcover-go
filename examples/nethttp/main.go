@@ -9,7 +9,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,7 +24,7 @@ func main() {
 		ServiceName: "examples-nethttp",
 		Env:         "examples",
 	}); err != nil {
-		log.Fatalf("init: %v", err)
+		fatalf("init: %v", err)
 	}
 	defer func() { _ = groundcover.CloseTimeout(5 * time.Second) }()
 
@@ -56,4 +55,9 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func fatalf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
 }

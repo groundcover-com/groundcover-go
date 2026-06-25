@@ -43,8 +43,12 @@ jobs:
         run: go build ./...
 
   lint:
-    name: lint
+    name: lint (${{ matrix.dir }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [".", "prometheus", "contrib/gin", "examples"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -53,6 +57,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
+          working-directory: ${{ matrix.dir }}
 
   test:
     name: test (go ${{ matrix.go }})
@@ -71,32 +76,39 @@ jobs:
         run: go test -race -covermode=atomic -coverprofile=coverage.txt ./...
 
   nested-modules:
-    name: nested-modules (${{ matrix.module }})
+    name: nested-modules (${{ matrix.module }}, go ${{ matrix.go }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         module: ["prometheus", "contrib/gin", "examples"]
+        go: ["1.25", "1.26"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_FLOOR }}
+          go-version: ${{ matrix.go }}
+          check-latest: true
       - name: Build and test module
         working-directory: ${{ matrix.module }}
         run: |
           go build ./...
-          go test ./...
+          go test -race ./...
 
   govulncheck:
-    name: govulncheck
+    name: govulncheck (${{ matrix.dir }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [".", "prometheus", "contrib/gin", "examples"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_FLOOR }}
       - name: Run govulncheck
+        working-directory: ${{ matrix.dir }}
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
