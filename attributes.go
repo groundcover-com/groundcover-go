@@ -34,6 +34,21 @@ func (a Attributes) merge(other Attributes) {
 	}
 }
 
+// sanitizeAttributes returns a deep, JSON-coerced copy of a. It is applied at
+// capture time so the queued event is an immutable snapshot (later caller
+// mutation of nested maps/slices cannot change it) and so the byte estimate and
+// wire encoding operate on fully-expanded values.
+func sanitizeAttributes(a Attributes) Attributes {
+	if len(a) == 0 {
+		return nil
+	}
+	out := make(Attributes, len(a))
+	for k, v := range a {
+		out[k] = sanitizeValue(v, 0)
+	}
+	return out
+}
+
 // sanitizeValue converts an arbitrary value into a JSON-friendly form, bounding
 // recursion depth and coercing unsupported kinds to strings. It is the single
 // place that decides how Go values appear on the wire.

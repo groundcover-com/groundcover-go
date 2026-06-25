@@ -238,12 +238,6 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 		e.User.ID = cfg.Hasher.HashIdentity(e.User.ID)
 		e.User.Email = cfg.Hasher.HashIdentity(e.User.Email)
 	}
-	if e.Fingerprint == "" {
-		e.Fingerprint = fingerprint(e)
-	}
-	if e.Title == "" {
-		e.Title = titleFor(e)
-	}
 
 	if cfg.BeforeSend != nil {
 		out := c.runBeforeSend(cfg.BeforeSend, e)
@@ -253,6 +247,22 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 		}
 		e = out
 	}
+
+	// Compute the grouping key and display title on the final, post-BeforeSend
+	// event so a scrubber that rewrites the message/type/stack is reflected and
+	// no pre-scrub data leaks via the title or fingerprint. Explicit overrides
+	// (WithFingerprint/WithTitle, or values set by BeforeSend) are preserved.
+	if e.Fingerprint == "" {
+		e.Fingerprint = fingerprint(e)
+	}
+	if e.Title == "" {
+		e.Title = titleFor(e)
+	}
+
+	// Snapshot the attributes: a deep, JSON-coerced copy so later caller mutation
+	// of nested values cannot change the queued event, and so the byte budget is
+	// estimated on fully-expanded values.
+	e.Attributes = sanitizeAttributes(e.Attributes)
 
 	c.metrics.IncCaptured()
 	c.enqueue(cfg, e)

@@ -72,8 +72,21 @@ func isSessionLevelKey(k string) bool {
 // detailed resource attributes, severity, and custom attributes. On the RUM
 // endpoint this is the only durable custom bag (top-level custom attributes are
 // dropped), so all queryable custom data is nested here.
+//
+// Caller attributes are written first; SDK-managed keys (resource, identity,
+// severity, gc.title) are written afterwards so a caller cannot override them —
+// e.g. inject a raw, unhashed user.id or a non-numeric severity_number. The
+// event's Attributes are expected to be sanitized already (done at capture).
 func buildMetadata(e *Event, res resource) map[string]any {
 	md := make(map[string]any, len(e.Attributes)+len(res.attrs)+8)
+
+	// Caller-supplied custom attributes, minus the reserved SDK-managed keys.
+	for k, v := range e.Attributes {
+		if isSDKManagedKey(k) {
+			continue
+		}
+		md[k] = v
+	}
 
 	// Detailed resource attributes (telemetry.sdk.*, process.*, host.*, k8s.pod.*).
 	for k, v := range res.attrs {
@@ -91,15 +104,9 @@ func buildMetadata(e *Event, res resource) map[string]any {
 	setIfNonEmpty(md, "session.id", e.SessionID)
 	setIfNonEmpty(md, "anonymous_id", e.AnonymousID)
 
-	// Severity.
+	// Severity (always numeric severity_number + string level).
 	md["level"] = string(e.Level)
 	md["severity_number"] = e.Level.severityNumber()
-
-	// Custom attributes (sanitized). Applied before the reserved gc.* keys so
-	// the SDK-managed namespace always wins.
-	for k, v := range e.Attributes {
-		md[k] = sanitizeValue(v, 0)
-	}
 
 	// Reserved gc.* namespace: the human-readable display title (separate from
 	// the opaque error_fingerprint grouping key).
@@ -107,6 +114,18 @@ func buildMetadata(e *Event, res resource) map[string]any {
 		md["gc.title"] = e.Title
 	}
 	return md
+}
+
+// isSDKManagedKey reports whether a metadata key is owned by the SDK and must
+// not be set or overridden by caller attributes.
+func isSDKManagedKey(k string) bool {
+	switch k {
+	case "user.id", "user.email", "user.name", "user.organization",
+		"session.id", "anonymous_id", "level", "severity_number", "gc.title":
+		return true
+	default:
+		return false
+	}
 }
 
 func setIfNonEmpty(m map[string]any, k, v string) {
