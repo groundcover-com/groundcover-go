@@ -1,0 +1,402 @@
+package groundcover
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"sync/atomic"
+	"time"
+
+	"github.com/groundcover-com/groundcover-go/internal/logthrottle"
+	"github.com/groundcover-com/groundcover-go/internal/ringbuf"
+	"github.com/groundcover-com/groundcover-go/internal/safeguard"
+	"github.com/groundcover-com/groundcover-go/internal/selfmetrics"
+	"github.com/groundcover-com/groundcover-go/internal/transport"
+)
+
+// eventType is the only event type emitted in v1 (error tracking).
+const eventType = "exception"
+
+// panicFlushTimeout bounds the best-effort flush performed by Recover before
+// re-raising a panic.
+const panicFlushTimeout = 2 * time.Second
+
+// Client is an explicit SDK client. Most callers use the package-level API
+// (Init + CaptureError); New is for tests and multi-config setups.
+type Client struct {
+	cfg      atomic.Pointer[Config]
+	res      resource
+	disabled bool
+
+	metrics  *selfmetrics.Metrics
+	throttle *logthrottle.Throttler
+	onPanic  safeguard.Handler
+
+	ring   *ringbuf.Buffer[*Event]
+	worker *transport.Worker[*Event]
+
+	debug    bool
+	debugOut io.Writer
+}
+
+// New constructs an explicit Client. A Disabled config yields a no-op client.
+func New(cfg Config) (*Client, error) {
+	return newClient(cfg, nil)
+}
+
+// newClient builds a client, optionally with an injected sender (test seam).
+func newClient(cfg Config, sender transport.Sender) (*Client, error) {
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	resolved := cfg.withDefaults()
+
+	c := &Client{metrics: selfmetrics.New()}
+	c.cfg.Store(&resolved)
+	if resolved.Disabled {
+		c.disabled = true
+		return c, nil
+	}
+
+	c.res = detectResource(resolved)
+	c.throttle = logthrottle.New(loggerSink{logger: resolveLogger(resolved.Logger)}, logthrottle.Options{
+		Window:       5 * time.Second,
+		GlobalWindow: time.Second,
+		GlobalCap:    20,
+	})
+	c.onPanic = func(info safeguard.PanicInfo) {
+		c.metrics.IncPanicsRecovered()
+		// Log the panic's type, not its value, to avoid leaking data into
+		// SDK-internal logs.
+		c.throttle.Log(logthrottle.LevelError, fmt.Sprintf("recovered SDK-internal panic (%T)", info.Value))
+	}
+
+	c.debug = resolved.Debug
+	c.debugOut = os.Stderr
+
+	c.ring = ringbuf.New[*Event](resolved.MaxQueue, resolved.MaxBytes, estimateSize)
+
+	if sender == nil {
+		client := resolved.HTTPClient
+		if client == nil {
+			client = &http.Client{Timeout: defaultHTTPTimeout}
+		}
+		sender = transport.NewHTTPSender(transport.HTTPConfig{
+			Endpoint:     resolved.endpoint(),
+			IngestionKey: resolved.IngestionKey,
+			UserAgent:    userAgent(),
+			Client:       client,
+		})
+	}
+
+	res := c.res
+	encode := func(items []*Event) ([]byte, error) { return encodeBatch(items, res) }
+
+	c.worker = transport.NewWorker[*Event](
+		c.ring, sender, encode, metricsObserver{m: c.metrics}, c.throttle, c.onPanic,
+		transport.WorkerConfig{
+			BatchSize:        resolved.BatchSize,
+			MaxBatchBytes:    resolved.MaxBatchBytes,
+			FlushInterval:    resolved.FlushInterval,
+			MaxRetries:       resolved.MaxRetries,
+			RetryMax:         resolved.RetryMax,
+			RateLimitBackoff: resolved.RateLimitBackoff,
+		},
+	)
+	c.worker.Start()
+	return c, nil
+}
+
+func resolveLogger(l Logger) Logger {
+	if l != nil {
+		return l
+	}
+	return newSlogLogger()
+}
+
+// config returns the current resolved configuration snapshot.
+func (c *Client) config() *Config { return c.cfg.Load() }
+
+// CaptureError captures err (handled by default) and enqueues it for delivery.
+// It never blocks on I/O and never affects control flow.
+func (c *Client) CaptureError(ctx context.Context, err error, opts ...Option) {
+	if c.disabled || err == nil {
+		return
+	}
+	safeguard.Do(func() {
+		e := c.newErrorEvent(err)
+		c.finishAndEnqueue(ctx, e, opts)
+	}, c.onPanic)
+}
+
+// CaptureMessage captures a non-error notice at the given level.
+func (c *Client) CaptureMessage(ctx context.Context, msg string, level Level, opts ...Option) {
+	if c.disabled {
+		return
+	}
+	safeguard.Do(func() {
+		e := &Event{
+			ID:           newUUID(),
+			Timestamp:    time.Now(),
+			Type:         eventType,
+			Level:        LevelInfo, // default; the per-call level is applied as an option below
+			ErrorHandled: true,
+			ErrorType:    messageErrorType,
+			ErrorMessage: msg,
+			Service:      Service{Name: c.res.serviceName, Version: c.res.release},
+		}
+		// Apply the per-call level as the first option so it wins over the ctx
+		// scope (global < ctx < per-call); explicit caller opts can still override.
+		msgOpts := append([]Option{WithLevel(level)}, opts...)
+		c.finishAndEnqueue(ctx, e, msgOpts)
+	}, c.onPanic)
+}
+
+// Recover captures a panic in the current goroutine (as an unhandled error),
+// performs a short best-effort flush, and re-raises the panic. Use it deferred:
+//
+//	defer client.Recover(ctx)
+func (c *Client) Recover(ctx context.Context) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	if !c.disabled {
+		safeguard.Do(func() {
+			e := c.newPanicEvent(r)
+			c.finishAndEnqueue(ctx, e, nil)
+			// A fresh context: the caller's ctx may already be cancelled by the
+			// panic unwinding, but we still want a brief best-effort flush.
+			flushCtx, cancel := context.WithTimeout(context.Background(), panicFlushTimeout)
+			defer cancel()
+			_ = c.worker.Flush(flushCtx) //nolint:contextcheck // deliberate detached best-effort flush before re-raise
+		}, c.onPanic)
+	}
+	panic(r) // re-raise: we observe, never alter control flow
+}
+
+// CaptureRecovered captures an already-recovered panic value without re-raising.
+// It is used by middleware that owns the response lifecycle.
+func (c *Client) CaptureRecovered(ctx context.Context, recovered any, opts ...Option) {
+	if c.disabled || recovered == nil {
+		return
+	}
+	safeguard.Do(func() {
+		e := c.newPanicEvent(recovered)
+		c.finishAndEnqueue(ctx, e, opts)
+	}, c.onPanic)
+}
+
+// newErrorEvent builds a handled-error event from an error.
+func (c *Client) newErrorEvent(err error) *Event {
+	cfg := c.config()
+	return &Event{
+		ID:           newUUID(),
+		Timestamp:    time.Now(),
+		Type:         eventType,
+		Level:        LevelError,
+		ErrorHandled: true,
+		ErrorType:    errorType(err),
+		ErrorMessage: err.Error(),
+		Stacktrace:   captureStack(3, cfg.StackDepthMax, c.res.mainModule),
+		Service:      Service{Name: c.res.serviceName, Version: c.res.release},
+	}
+}
+
+// newPanicEvent builds an unhandled-error event from a recovered panic value.
+func (c *Client) newPanicEvent(recovered any) *Event {
+	cfg := c.config()
+	var (
+		etype string
+		emsg  string
+	)
+	if err, ok := recovered.(error); ok {
+		etype = errorType(err)
+		emsg = err.Error()
+	} else {
+		etype = "panic"
+		emsg = fmt.Sprintf("%v", recovered)
+	}
+	return &Event{
+		ID:           newUUID(),
+		Timestamp:    time.Now(),
+		Type:         eventType,
+		Level:        LevelFatal,
+		levelLocked:  true, // a recovered panic is fatal; scope must not downgrade it
+		ErrorHandled: false,
+		ErrorType:    etype,
+		ErrorMessage: emsg,
+		Stacktrace:   captureStack(3, cfg.StackDepthMax, c.res.mainModule),
+		Service:      Service{Name: c.res.serviceName, Version: c.res.release},
+	}
+}
+
+// finishAndEnqueue applies scope and options, pseudonymizes identity, computes
+// the fingerprint, runs BeforeSend, and enqueues the event.
+func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) {
+	cfg := c.config()
+
+	scopeFromContext(ctx).applyTo(e)
+	for _, o := range opts {
+		if o != nil {
+			o(e)
+		}
+	}
+
+	if cfg.BeforeSend != nil {
+		out := c.runBeforeSend(cfg.BeforeSend, e)
+		if out == nil {
+			c.metrics.AddDropped(selfmetrics.DropBeforeSend, 1)
+			return
+		}
+		e = out
+	}
+
+	// Pseudonymize identity as the final step before enqueue so nothing — scope,
+	// per-call options, or BeforeSend — can introduce a raw user.id/email onto
+	// the wire after the hash would otherwise have run.
+	if cfg.Hasher != nil {
+		e.User.ID = cfg.Hasher.HashIdentity(e.User.ID)
+		e.User.Email = cfg.Hasher.HashIdentity(e.User.Email)
+	}
+
+	// Compute the grouping key and display title on the final, post-BeforeSend
+	// event so a scrubber that rewrites the message/type/stack is reflected and
+	// no pre-scrub data leaks via the title or fingerprint. Explicit overrides
+	// (WithFingerprint/WithTitle, or values set by BeforeSend) are preserved.
+	if e.Fingerprint == "" {
+		e.Fingerprint = fingerprint(e)
+	}
+	if e.Title == "" {
+		e.Title = titleFor(e)
+	}
+
+	// Snapshot the attributes: a deep, JSON-coerced copy so later caller mutation
+	// of nested values cannot change the queued event, and so the byte budget is
+	// estimated on fully-expanded values.
+	e.Attributes = sanitizeAttributes(e.Attributes)
+
+	if c.debug {
+		c.writeDebug(e)
+	}
+
+	c.metrics.IncCaptured()
+	c.enqueue(cfg, e)
+}
+
+// writeDebug renders the finalized event to the debug writer, guarded so it can
+// never affect capture.
+func (c *Client) writeDebug(e *Event) {
+	if c.debugOut == nil {
+		return
+	}
+	safeguard.Do(func() { _, _ = io.WriteString(c.debugOut, renderDebug(e)) }, c.onPanic)
+}
+
+// runBeforeSend invokes the user callback inside a panic guard. A panic is
+// treated as "keep the event unmodified".
+func (c *Client) runBeforeSend(fn func(*Event) *Event, e *Event) (out *Event) {
+	out = e
+	safeguard.Do(func() { out = fn(e) }, c.onPanic)
+	return out
+}
+
+// enqueue performs the bounded, non-blocking hand-off to the pipeline.
+func (c *Client) enqueue(cfg *Config, e *Event) {
+	dropped := c.ring.Push(e)
+	if dropped > 0 {
+		c.metrics.AddDropped(selfmetrics.DropOverflow, int64(dropped))
+		c.fireOnDrop(cfg.OnDrop, dropped)
+	}
+	c.metrics.SetQueuePending(int64(c.ring.Len()), int64(c.ring.Bytes()))
+	if c.ring.Len() >= cfg.BatchSize {
+		c.worker.Notify()
+	}
+}
+
+func (c *Client) fireOnDrop(fn func(int), n int) {
+	if fn == nil {
+		return
+	}
+	safeguard.Do(func() { fn(n) }, c.onPanic)
+}
+
+// SetUser sets the identity on the request scope and returns the context. If the
+// context already carries a scope (e.g. one installed by middleware) it is
+// mutated in place, so the change is visible to whoever else holds that context.
+func (c *Client) SetUser(ctx context.Context, u User) context.Context {
+	newCtx, sc := ensureScope(ctx)
+	sc.SetUser(u)
+	return newCtx
+}
+
+// WithScope applies fn to the request scope and returns the context. As with
+// SetUser, an existing scope on the context is mutated in place.
+func (c *Client) WithScope(ctx context.Context, fn func(*Scope)) context.Context {
+	newCtx, sc := ensureScope(ctx)
+	if fn != nil {
+		safeguard.Do(func() { fn(sc) }, c.onPanic)
+	}
+	return newCtx
+}
+
+// WithIsolatedScope returns a context carrying a fresh, isolated copy of the
+// current scope. Middleware uses it at the start of each request so per-request
+// identity/attributes set by handlers never leak across requests.
+func (c *Client) WithIsolatedScope(ctx context.Context) context.Context {
+	return isolatedScopeContext(ctx)
+}
+
+// Flush blocks until pending events are delivered or ctx expires.
+func (c *Client) Flush(ctx context.Context) error {
+	if c.disabled {
+		return nil
+	}
+	return c.worker.Flush(ctx)
+}
+
+// Close flushes and stops the client. It is idempotent and bounded by ctx.
+func (c *Client) Close(ctx context.Context) error {
+	if c.disabled {
+		return nil
+	}
+	return c.worker.Close(ctx)
+}
+
+// FlushTimeout is convenience sugar for Flush with a fresh context bounded by d.
+// The context-based Flush remains the primitive for callers that need
+// cancellation or composition with an existing context.
+func (c *Client) FlushTimeout(d time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return c.Flush(ctx)
+}
+
+// CloseTimeout is convenience sugar for Close with a fresh context bounded by d.
+// The context-based Close remains the primitive.
+func (c *Client) CloseTimeout(d time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return c.Close(ctx)
+}
+
+// Stats returns a snapshot of the SDK's self-observability counters.
+func (c *Client) Stats() Stats {
+	return statsFromSnapshot(c.metrics.Snapshot())
+}
+
+// metricsObserver adapts the worker's Observer to the self-metrics counters.
+type metricsObserver struct{ m *selfmetrics.Metrics }
+
+func (o metricsObserver) OnSent(n int)   { o.m.AddSent(int64(n)) }
+func (o metricsObserver) OnRetry()       { o.m.IncRetries() }
+func (o metricsObserver) OnRateLimited() { o.m.IncRateLimited() }
+func (o metricsObserver) OnSendExhausted(n int) {
+	o.m.AddDropped(selfmetrics.DropSendExhausted, int64(n))
+}
+func (o metricsObserver) OnSubsystemDisabled() { o.m.IncSubsystemsDisabled() }
+func (o metricsObserver) OnQueue(items, bytes int) {
+	o.m.SetQueuePending(int64(items), int64(bytes))
+}

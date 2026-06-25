@@ -1,0 +1,26 @@
+# Binaries and build output
+*.exe
+*.test
+*.out
+/bin/
+/dist/
+
+# Go workspace files (local multi-module development only)
+go.work
+go.work.sum
+
+# Coverage and profiling
+coverage.txt
+coverage.out
+*.prof
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Compiled example binaries
+/examples/basic/basic
+/examples/nethttp/nethttp
+/examples/gin/gin
+/examples/roundtrip/roundtrip
