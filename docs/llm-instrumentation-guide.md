@@ -56,9 +56,11 @@ func main() {
 	if err := groundcover.Init(groundcover.Config{
 		DSN:          os.Getenv("GC_DSN"),           // base ingestion origin; the SDK appends the path
 		IngestionKey: os.Getenv("GC_INGESTION_KEY"), // optional; omit when using a local sensor
-		// Workload/Env/Release are auto-detected from the environment
-		// (GC_WORKLOAD/OTEL_SERVICE_NAME, GC_ENV/DEPLOYMENT_ENVIRONMENT, GC_RELEASE)
+		// ServiceName/Env/Release are auto-detected from the environment
+		// (OTEL_SERVICE_NAME/GC_SERVICE_NAME, GC_ENV/DEPLOYMENT_ENVIRONMENT, GC_RELEASE)
 		// and from the k8s Downward API. Set them explicitly only to override.
+		// In Kubernetes you can usually omit ServiceName — the groundcover sensor
+		// enriches pod -> workload server-side.
 	}); err != nil {
 		log.Fatalf("groundcover init: %v", err)
 	}

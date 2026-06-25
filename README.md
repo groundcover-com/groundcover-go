@@ -37,8 +37,8 @@ import (
 )
 
 func main() {
-	// Workload/env/release/pod are auto-detected from the environment
-	// (Downward API). See "Getting your DSN and ingestion key" below.
+	// service.name/env/release/pod are auto-detected from the environment
+	// (OTEL_SERVICE_NAME, Downward API). See "Getting your DSN and ingestion key" below.
 	if err := groundcover.Init(groundcover.Config{
 		DSN:          "https://<tenant>.platform.grcv.io",
 		IngestionKey: "<rum-ingestion-key>",

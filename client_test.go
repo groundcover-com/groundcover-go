@@ -37,7 +37,7 @@ func decodePayload(t *testing.T, sender *testutil.MockSender) wirePayload {
 
 func TestCaptureErrorRoundTrip(t *testing.T) {
 	sender := &testutil.MockSender{}
-	c := mustClient(t, Config{Workload: "checkout", Env: "prod", Release: "1.2.3"}, sender)
+	c := mustClient(t, Config{ServiceName: "checkout", Env: "prod", Release: "1.2.3"}, sender)
 
 	ctx := c.SetUser(context.Background(), User{ID: "u-1", Organization: "acme"})
 	c.CaptureError(ctx, errors.New("charge failed"), WithAttributes(Attributes{

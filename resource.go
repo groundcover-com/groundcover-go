@@ -46,7 +46,7 @@ func firstNonEmpty(vals ...string) string {
 // detectResource reads configuration, environment, and runtime information into
 // a resource. Explicit Config fields take precedence over environment values.
 func detectResource(cfg Config) resource {
-	serviceName := firstNonEmpty(cfg.Workload, os.Getenv("GC_WORKLOAD"), os.Getenv("OTEL_SERVICE_NAME"))
+	serviceName := firstNonEmpty(cfg.ServiceName, os.Getenv("OTEL_SERVICE_NAME"), os.Getenv("GC_SERVICE_NAME"))
 	env := firstNonEmpty(cfg.Env, os.Getenv("GC_ENV"), os.Getenv("DEPLOYMENT_ENVIRONMENT"))
 	release := firstNonEmpty(cfg.Release, os.Getenv("GC_RELEASE"))
 

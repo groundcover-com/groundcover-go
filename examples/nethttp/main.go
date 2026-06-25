@@ -21,9 +21,9 @@ import (
 
 func main() {
 	if err := groundcover.Init(groundcover.Config{
-		DSN:      envOr("GC_DSN", "https://example.invalid"),
-		Workload: "examples-nethttp",
-		Env:      "examples",
+		DSN:         envOr("GC_DSN", "https://example.invalid"),
+		ServiceName: "examples-nethttp",
+		Env:         "examples",
 	}); err != nil {
 		log.Fatalf("init: %v", err)
 	}

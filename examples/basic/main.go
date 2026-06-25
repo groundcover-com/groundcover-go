@@ -22,7 +22,7 @@ func main() {
 	if err := groundcover.Init(groundcover.Config{
 		DSN:          envOr("GC_DSN", "https://example.invalid"),
 		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
-		Workload:     "examples-basic",
+		ServiceName:  "examples-basic",
 		Env:          "examples",
 		Release:      groundcover.Version,
 	}); err != nil {

@@ -47,8 +47,11 @@ type Config struct {
 	// which needs no auth. Use a RUM-type ingestion key.
 	IngestionKey string
 
-	// Workload overrides service.name (env: GC_WORKLOAD / OTEL_SERVICE_NAME).
-	Workload string
+	// ServiceName sets the service identity (OpenTelemetry service.name; the
+	// "service" in Datadog/OTel terms). Auto-detected from OTEL_SERVICE_NAME /
+	// GC_SERVICE_NAME when unset. In Kubernetes you can usually leave this empty
+	// and let the groundcover sensor enrich pod -> workload server-side.
+	ServiceName string
 	// Env overrides deployment.environment.name (env: GC_ENV / DEPLOYMENT_ENVIRONMENT).
 	Env string
 	// Release overrides service.version (env: GC_RELEASE).

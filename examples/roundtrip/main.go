@@ -52,7 +52,7 @@ func run() error {
 	if err := groundcover.Init(groundcover.Config{
 		DSN:           env.dsn,
 		IngestionKey:  env.ingestionKey,
-		Workload:      "groundcover-go-roundtrip",
+		ServiceName:   "groundcover-go-roundtrip",
 		Env:           "examples",
 		Release:       groundcover.Version,
 		FlushInterval: time.Second,
@@ -63,7 +63,7 @@ func run() error {
 
 	ctx := groundcover.SetUser(context.Background(), groundcover.User{ID: "roundtrip-user", Organization: "groundcover"})
 	groundcover.CaptureError(ctx, errors.New("synthetic roundtrip error "+testID), groundcover.WithAttributes(groundcover.Attributes{
-		"gc.test_id":    testID,
+		"gc.test_id":     testID,
 		"example.string": "hello",
 		"example.int":    7,
 		"example.float":  3.14,
