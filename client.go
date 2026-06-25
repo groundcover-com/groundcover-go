@@ -126,21 +126,21 @@ func (c *Client) CaptureMessage(ctx context.Context, msg string, level Level, op
 	if c.disabled {
 		return
 	}
-	if !level.valid() {
-		level = LevelInfo
-	}
 	safeguard.Do(func() {
 		e := &Event{
 			ID:           newUUID(),
 			Timestamp:    time.Now(),
 			Type:         eventType,
-			Level:        level,
+			Level:        LevelInfo, // default; the per-call level is applied as an option below
 			ErrorHandled: true,
 			ErrorType:    messageErrorType,
 			ErrorMessage: msg,
 			Service:      Service{Name: c.res.serviceName, Version: c.res.release},
 		}
-		c.finishAndEnqueue(ctx, e, opts)
+		// Apply the per-call level as the first option so it wins over the ctx
+		// scope (global < ctx < per-call); explicit caller opts can still override.
+		msgOpts := append([]Option{WithLevel(level)}, opts...)
+		c.finishAndEnqueue(ctx, e, msgOpts)
 	}, c.onPanic)
 }
 
@@ -234,11 +234,6 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 		}
 	}
 
-	if cfg.Hasher != nil {
-		e.User.ID = cfg.Hasher.HashIdentity(e.User.ID)
-		e.User.Email = cfg.Hasher.HashIdentity(e.User.Email)
-	}
-
 	if cfg.BeforeSend != nil {
 		out := c.runBeforeSend(cfg.BeforeSend, e)
 		if out == nil {
@@ -246,6 +241,14 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 			return
 		}
 		e = out
+	}
+
+	// Pseudonymize identity as the final step before enqueue so nothing — scope,
+	// per-call options, or BeforeSend — can introduce a raw user.id/email onto
+	// the wire after the hash would otherwise have run.
+	if cfg.Hasher != nil {
+		e.User.ID = cfg.Hasher.HashIdentity(e.User.ID)
+		e.User.Email = cfg.Hasher.HashIdentity(e.User.Email)
 	}
 
 	// Compute the grouping key and display title on the final, post-BeforeSend

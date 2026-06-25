@@ -290,11 +290,18 @@ func TestWorkerBackoffMath(t *testing.T) {
 	}
 }
 
-func TestWorkerSendPanicDoesNotCrash(t *testing.T) {
-	// A panic inside a send must be contained by the per-send guard and must not
-	// take down the worker or the test process.
-	sender := &testutil.MockSender{Responder: func(int, []byte) error { panic("send panic") }}
-	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{BatchSize: 1, MaxRetries: 0})
+func TestWorkerSendPanicCountedAsExhausted(t *testing.T) {
+	// A panic inside a send must be contained, counted as an exhausted drop, and
+	// must not take down the worker (a later batch still sends).
+	var calls atomic.Int64
+	sender := &testutil.MockSender{Responder: func(int, []byte) error {
+		if calls.Add(1) == 1 {
+			panic("send panic")
+		}
+		return nil
+	}}
+	obs := &countObserver{}
+	w, ring := newWorker(t, sender, obs, transport.WorkerConfig{BatchSize: 1, MaxRetries: 0})
 	w.Start()
 	defer func() { _ = w.Close(context.Background()) }()
 
@@ -302,7 +309,18 @@ func TestWorkerSendPanicDoesNotCrash(t *testing.T) {
 	if err := w.Flush(context.Background()); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
-	// Reaching here without a process crash is the assertion.
+	if obs.exhausted.Load() != 1 {
+		t.Fatalf("a panicking send should count one exhausted drop, got %d", obs.exhausted.Load())
+	}
+
+	// The worker must still be alive: a subsequent batch sends successfully.
+	ring.Push(2)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if obs.sent.Load() != 1 {
+		t.Fatalf("worker should survive a send panic and deliver later batches, sent=%d", obs.sent.Load())
+	}
 }
 
 // loopPanicObserver panics inside OnQueue, which the worker calls from its loop
@@ -318,7 +336,9 @@ func (o *loopPanicObserver) OnQueue(int, int)     { panic("queue panic") }
 
 func TestWorkerLoopPanicSelfDisables(t *testing.T) {
 	obs := &loopPanicObserver{}
-	w, _ := newWorker(t, &testutil.MockSender{}, obs, transport.WorkerConfig{FlushInterval: 20 * time.Millisecond})
+	sender := &testutil.MockSender{}
+	ring := ringbuf.New[int](100, 0, nil)
+	w := transport.NewWorker[int](ring, sender, intEncoder, obs, nil, nil, transport.WorkerConfig{FlushInterval: 20 * time.Millisecond})
 	w.Start()
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -327,6 +347,20 @@ func TestWorkerLoopPanicSelfDisables(t *testing.T) {
 	}
 	if obs.disabled.Load() != 1 {
 		t.Fatalf("expected the loop to self-disable exactly once, got %d", obs.disabled.Load())
+	}
+
+	// After self-disable, Flush must still drain pending items rather than
+	// silently succeed (the Observer keeps panicking in OnQueue; Flush guards it).
+	ring.Push(1)
+	ring.Push(2)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush after self-disable: %v", err)
+	}
+	if sender.Calls() == 0 {
+		t.Fatal("Flush after self-disable must drain pending items")
+	}
+	if ring.Len() != 0 {
+		t.Fatalf("ring should be drained after Flush, got %d", ring.Len())
 	}
 
 	// Close must not hang after a self-disabled loop.

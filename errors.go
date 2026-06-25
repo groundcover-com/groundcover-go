@@ -1,7 +1,6 @@
 package groundcover
 
 import (
-	"errors"
 	"reflect"
 	"strings"
 )
@@ -47,8 +46,9 @@ func errorType(err error) string {
 	}
 	inner := innermostError(err)
 
-	var typer errorTyper
-	if errors.As(err, &typer) {
+	// Both the ErrorType() override and the reflected type are taken from the
+	// innermost error, so an outer wrapper cannot relabel the type.
+	if typer, ok := inner.(errorTyper); ok {
 		if t := typer.ErrorType(); t != "" {
 			return t
 		}

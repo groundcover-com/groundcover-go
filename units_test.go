@@ -38,6 +38,25 @@ func TestErrorTypeExtraction(t *testing.T) {
 	}
 }
 
+type outerError struct{ inner error }
+
+func (o *outerError) Error() string     { return "outer: " + o.inner.Error() }
+func (o *outerError) Unwrap() error     { return o.inner }
+func (o *outerError) ErrorType() string { return "OuterType" }
+
+func TestErrorTypeIgnoresOuterErrorTypeMethod(t *testing.T) {
+	// An ErrorType() on an outer wrapper must not relabel the innermost type.
+	err := &outerError{inner: errors.New("inner")}
+	if got := errorType(err); got != "*errors.errorString" {
+		t.Fatalf("outer ErrorType() should not win over innermost type, got %q", got)
+	}
+	// But ErrorType() on the innermost error is honored.
+	innerTyped := fmt.Errorf("wrap: %w", &typedError{msg: "x"})
+	if got := errorType(innerTyped); got != "custom.DomainError" {
+		t.Fatalf("innermost ErrorType() should win, got %q", got)
+	}
+}
+
 func TestFingerprintStableAcrossLineChanges(t *testing.T) {
 	e1 := &Event{
 		ErrorType: "*errors.errorString",

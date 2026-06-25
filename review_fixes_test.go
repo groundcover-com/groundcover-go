@@ -127,6 +127,49 @@ func TestAttributesSnapshotOnCapture(t *testing.T) {
 	}
 }
 
+// TestHasherAppliesAfterBeforeSend verifies identity set (or left raw) by
+// BeforeSend is still pseudonymized — the hash runs after BeforeSend.
+func TestHasherAppliesAfterBeforeSend(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{
+		Hasher: NewHMACHasher([]byte("k")),
+		BeforeSend: func(e *Event) *Event {
+			e.User.ID = "raw-from-beforesend"
+			e.User.Email = "raw@evil.com"
+			return e
+		},
+	}, sender)
+
+	c.CaptureError(context.Background(), errors.New("e"))
+	_ = c.Flush(context.Background())
+
+	md := decodePayload(t, sender).Events[0].Attributes.ErrorMetadata
+	if md["user.id"] == "raw-from-beforesend" {
+		t.Fatal("BeforeSend-set raw user.id bypassed the hasher")
+	}
+	if md["user.email"] == "raw@evil.com" {
+		t.Fatal("BeforeSend-set raw user.email bypassed the hasher")
+	}
+	if md["user.id"] == "" {
+		t.Fatal("expected a hashed user.id")
+	}
+}
+
+// TestCaptureMessageLevelBeatsScope verifies the per-call level argument wins
+// over a ctx-scope level (global < ctx < per-call).
+func TestCaptureMessageLevelBeatsScope(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{}, sender)
+
+	ctx := c.WithScope(context.Background(), func(s *Scope) { s.SetLevel(LevelWarning) })
+	c.CaptureMessage(ctx, "m", LevelError)
+	_ = c.Flush(context.Background())
+
+	if got := decodePayload(t, sender).Events[0].Level; got != string(LevelError) {
+		t.Fatalf("per-call level must beat scope, got %q", got)
+	}
+}
+
 // TestSanitizeAttributesExpandsTypedCollections verifies the capture-time
 // snapshot expands typed collections so the byte estimate sees real structure.
 func TestSanitizeAttributesExpandsTypedCollections(t *testing.T) {

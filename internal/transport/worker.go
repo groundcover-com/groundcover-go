@@ -107,7 +107,6 @@ type Worker[T any] struct {
 
 	startOnce sync.Once
 	closeOnce sync.Once
-	disabled  atomicBool
 }
 
 // NewWorker constructs a Worker. ring, sender and encode are required; obs and
@@ -148,8 +147,8 @@ func (w *Worker[T]) Start() {
 		safeguard.Go(w.loop, func(info safeguard.PanicInfo) {
 			// A panicking loop self-disables rather than crash-looping. The
 			// loop's own deferred close(w.stopped) has already run during
-			// unwinding, so we must not close it again here.
-			w.disabled.set(true)
+			// unwinding, so we must not close it again here. Flush/Close still
+			// drain the ring caller-side, so pending events are not lost.
 			if w.obs != nil {
 				w.obs.OnSubsystemDisabled()
 			}
@@ -221,8 +220,17 @@ func (w *Worker[T]) dispatch(ctx context.Context, batch []T) {
 	}
 }
 
-// sendWithRetry encodes and delivers a batch, applying the retry/backoff policy.
+// sendWithRetry delivers a batch, guarded so a panic in encoding or in the
+// sender is contained, counted as an exhausted drop, and never propagates to the
+// worker loop (where it would self-disable the whole subsystem over one batch).
 func (w *Worker[T]) sendWithRetry(ctx context.Context, batch []T) {
+	if ok := safeguard.Do(func() { w.deliverBatch(ctx, batch) }, w.onPanic); !ok {
+		w.observeExhausted(len(batch))
+	}
+}
+
+// deliverBatch encodes and delivers a batch, applying the retry/backoff policy.
+func (w *Worker[T]) deliverBatch(ctx context.Context, batch []T) {
 	body, err := w.encode(batch)
 	if err != nil {
 		w.logf(logthrottle.LevelError, "encode failed, dropping batch")
@@ -295,18 +303,20 @@ func (w *Worker[T]) expBackoff(attempt int) time.Duration {
 	return time.Duration(w.rng.intn(int64(d) + 1))
 }
 
-// Flush drains the buffer and waits for in-flight sends, bounded by ctx.
+// Flush drains the buffer and waits for in-flight sends, bounded by ctx. It
+// drains even if the worker loop has self-disabled — a caller-driven dispatch —
+// so pending events are never silently left behind on a "successful" flush.
 func (w *Worker[T]) Flush(ctx context.Context) error {
-	if w.disabled.get() {
-		return nil
-	}
 	w.dispatchReady(ctx)
-	w.reportQueue()
+	// reportQueue is guarded here because Flush runs on the caller's goroutine;
+	// a misbehaving Observer must not panic the caller.
+	_ = safeguard.Do(w.reportQueue, w.onPanic)
 	return w.waitInflight(ctx)
 }
 
 // Close stops the worker, drains remaining items, and waits for in-flight sends,
-// all bounded by ctx. It is idempotent.
+// all bounded by ctx. It is idempotent. The drain is caller-driven so it also
+// covers the case where the loop already exited (e.g. after self-disable).
 func (w *Worker[T]) Close(ctx context.Context) error {
 	var err error
 	w.closeOnce.Do(func() {
@@ -316,6 +326,7 @@ func (w *Worker[T]) Close(ctx context.Context) error {
 		case <-ctx.Done():
 			err = ctx.Err()
 		}
+		w.dispatchReady(ctx) // drain anything the loop did not (e.g. after self-disable)
 		if waitErr := w.waitInflight(ctx); waitErr != nil && err == nil {
 			err = waitErr
 		}

@@ -23,12 +23,6 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	}
 }
 
-// atomicBool is a tiny boolean flag safe for concurrent use.
-type atomicBool struct{ v atomic.Bool }
-
-func (b *atomicBool) set(val bool) { b.v.Store(val) }
-func (b *atomicBool) get() bool    { return b.v.Load() }
-
 // jitterRNG is a tiny, concurrency-safe pseudo-random source used only for
 // backoff jitter (not security-sensitive). It uses a splitmix64 step driven by
 // an atomic counter, avoiding any dependency on math/rand.
