@@ -17,12 +17,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	groundcover "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go"
 	gcgin "github.com/groundcover-com/groundcover-go/contrib/gin"
 )
 
 func main() {
-	if err := groundcover.Init(groundcover.Config{
+	if err := gc.Init(gc.Config{
 		DSN:          envOr("GC_DSN", "https://example.invalid"),
 		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
 		ServiceName:  "examples-gin",
@@ -30,7 +30,7 @@ func main() {
 	}); err != nil {
 		fatalf("init: %v", err)
 	}
-	defer func() { _ = groundcover.CloseTimeout(5 * time.Second) }()
+	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -44,7 +44,7 @@ func main() {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/checkout", nil)
 	r.ServeHTTP(rec, req)
 
-	fmt.Printf("served /checkout -> %d; captured=%d\n", rec.Code, groundcover.GlobalStats().Captured)
+	fmt.Printf("served /checkout -> %d; captured=%d\n", rec.Code, gc.GlobalStats().Captured)
 }
 
 func envOr(key, fallback string) string {
