@@ -23,7 +23,7 @@ import (
 	"os"
 	"time"
 
-	groundcover "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 const (
@@ -49,20 +49,20 @@ func run() error {
 	testID := newID()
 	fmt.Printf("roundtrip: gc.test_id=%s dsn=%s api=%s\n", testID, env.dsn, env.apiURL)
 
-	if err := groundcover.Init(groundcover.Config{
+	if err := gc.Init(gc.Config{
 		DSN:           env.dsn,
 		IngestionKey:  env.ingestionKey,
 		ServiceName:   "groundcover-go-roundtrip",
 		Env:           "examples",
-		Release:       groundcover.Version,
+		Release:       gc.Version,
 		FlushInterval: time.Second,
 	}); err != nil {
 		return fmt.Errorf("init: %w", err)
 	}
-	defer func() { _ = groundcover.CloseTimeout(flushTimeout) }()
+	defer func() { _ = gc.CloseTimeout(flushTimeout) }()
 
-	ctx := groundcover.SetUser(context.Background(), groundcover.User{ID: "roundtrip-user", Organization: "groundcover"})
-	groundcover.CaptureError(ctx, errors.New("synthetic roundtrip error "+testID), groundcover.WithAttributes(groundcover.Attributes{
+	ctx := gc.SetUser(context.Background(), gc.User{ID: "roundtrip-user", Organization: "groundcover"})
+	gc.CaptureError(ctx, errors.New("synthetic roundtrip error "+testID), gc.WithAttributes(gc.Attributes{
 		"gc.test_id":     testID,
 		"example.string": "hello",
 		"example.int":    7,
@@ -70,7 +70,7 @@ func run() error {
 		"example.bool":   true,
 	}))
 
-	if err := groundcover.FlushTimeout(flushTimeout); err != nil {
+	if err := gc.FlushTimeout(flushTimeout); err != nil {
 		return fmt.Errorf("flush: %w", err)
 	}
 	fmt.Println("roundtrip: submitted, polling for read-back...")

@@ -14,38 +14,38 @@ import (
 	"os"
 	"time"
 
-	groundcover "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 func main() {
-	if err := groundcover.Init(groundcover.Config{
+	if err := gc.Init(gc.Config{
 		DSN:          envOr("GC_DSN", "https://example.invalid"),
 		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
 		ServiceName:  "examples-basic",
 		Env:          "examples",
-		Release:      groundcover.Version,
+		Release:      gc.Version,
 	}); err != nil {
 		fatalf("init: %v", err)
 	}
-	defer func() { _ = groundcover.CloseTimeout(5 * time.Second) }()
+	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
 	// Request-scoped identity + attributes live on the context.
-	ctx := groundcover.SetUser(context.Background(), groundcover.User{
+	ctx := gc.SetUser(context.Background(), gc.User{
 		ID:           "u-123",
 		Organization: "acme",
 	})
 
 	if err := charge(ctx); err != nil {
-		groundcover.CaptureError(ctx, err, groundcover.WithAttributes(groundcover.Attributes{
+		gc.CaptureError(ctx, err, gc.WithAttributes(gc.Attributes{
 			"order_id": "o-9",
 			"amount":   42.5,
 			"is_retry": true,
 		}))
 	}
 
-	groundcover.CaptureMessage(ctx, "falling back to stale cache", groundcover.LevelWarning)
+	gc.CaptureMessage(ctx, "falling back to stale cache", gc.LevelWarning)
 
-	fmt.Printf("captured; stats=%+v\n", groundcover.GlobalStats())
+	fmt.Printf("captured; stats=%+v\n", gc.GlobalStats())
 }
 
 func charge(context.Context) error {
