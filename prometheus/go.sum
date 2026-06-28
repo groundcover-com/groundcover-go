@@ -1,5 +1,5 @@
-github.com/VictoriaMetrics/metrics v1.42.0 h1:t/OGs3BjMUYhxw/h83Z28qAss8DuA4QEVwO4NwJ9hZc=
-github.com/VictoriaMetrics/metrics v1.42.0/go.mod h1:xDM82ULLYCYdFRgQ2JBxi8Uf1+8En1So9YUwlGTOqTc=
+github.com/VictoriaMetrics/metrics v1.44.0 h1:Fr8yqQSV+ZfYaDD/anqk1E8e9YPgfleSleJmAI0M0Tw=
+github.com/VictoriaMetrics/metrics v1.44.0/go.mod h1:xDM82ULLYCYdFRgQ2JBxi8Uf1+8En1So9YUwlGTOqTc=
 github.com/valyala/fastrand v1.1.0 h1:f+5HkLW4rsgzdNoleUOB69hyT9IlD2ZQh9GyDMfb5G8=
 github.com/valyala/fastrand v1.1.0/go.mod h1:HWqCzkrkg6QXT8V2EXWvXCoow7vLwOFN002oeRzjapQ=
 github.com/valyala/histogram v1.2.0 h1:wyYGAZZt3CpwUiIb9AU/Zbllg1llXyrtApRS815OLoQ=
