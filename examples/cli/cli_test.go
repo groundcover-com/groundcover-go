@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -86,5 +85,5 @@ func TestDeadBackend_NeverBlocksOrPanics(t *testing.T) {
 type failingTransport struct{}
 
 func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
-	return nil, fmt.Errorf("offline delivery failure")
+	return nil, errors.New("offline delivery failure")
 }

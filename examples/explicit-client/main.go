@@ -108,7 +108,7 @@ func runWorker(client *gc.Client) {
 // doesn't abort the example.
 func fire(h http.Handler, path string) {
 	defer func() { _ = recover() }()
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 	h.ServeHTTP(httptest.NewRecorder(), req)
 }
 
