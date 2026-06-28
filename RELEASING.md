@@ -2,21 +2,25 @@
 
 The repository is a Go **multi-module** workspace: the core module at the root
 plus nested modules that depend on it (`contrib/gin`, `prometheus`, `examples`).
-During development those nested modules resolve the core via a local `replace`:
+Each nested module `require`s the **published** core version and keeps a local
+`replace` so day-to-day development and CI build against the in-tree core:
 
 ```text
-require github.com/groundcover-com/groundcover-go v0.0.0
+require github.com/groundcover-com/groundcover-go v0.1.0
 replace github.com/groundcover-com/groundcover-go => ../   (or ../../)
 ```
 
-> **Important:** a `replace` directive in a *dependency* module is ignored by
-> consumers. If a customer runs `go get github.com/groundcover-com/groundcover-go/contrib/gin`
-> while that module still `require`s core `v0.0.0`, the resolve fails (there is no
-> published `v0.0.0`). The `replace` is **for local development only**.
+> **Why both:** a `replace` directive in a *dependency* module is ignored by
+> consumers, while the `require` version is honored. So an external
+> `go get github.com/groundcover-com/groundcover-go/contrib/gin` resolves core
+> `v0.1.0` from the tag (go-gettable), and an in-repo `go build` resolves core
+> from the checkout via the `replace` (branch-local validation). The `require`
+> must therefore name a **real, published** core tag — never the `v0.0.0`
+> placeholder, which has no source and breaks external resolution.
 
 ## Release steps
 
-Tag the modules bottom-up so each nested module can require a real, published
+Tag the modules bottom-up so each nested module requires a real, published
 version of the core.
 
 1. **Tag the core module first.**
@@ -25,16 +29,18 @@ version of the core.
    git push origin v0.1.0
    ```
 
-2. **Bump each nested module to require the tagged core, and drop (or keep only
-   for dev) the `replace`.** For `contrib/gin`, `prometheus`, and `examples`:
+2. **Point each nested module at the tagged core.** The modules already
+   `require` the core version; bump it when cutting a new core release. The
+   local `replace` is retained for development and is harmless in published tags
+   (consumers ignore it), so it does **not** need to be dropped:
    ```bash
    cd contrib/gin
    go mod edit -require=github.com/groundcover-com/groundcover-go@v0.1.0
-   go mod edit -dropreplace=github.com/groundcover-com/groundcover-go
    go mod tidy
    ```
-   Repeat for `prometheus/` and `examples/` (the latter also requires
-   `contrib/gin`, so bump/drop that replace too).
+   Repeat for `prometheus/` and `examples/`. To publish a `replace`-free tag for
+   cleanliness, add `go mod edit -dropreplace=github.com/groundcover-com/groundcover-go`
+   before tidying — optional, since the `replace` has no effect on consumers.
 
 3. **Tag the nested modules** with their module-path-prefixed tags:
    ```bash
@@ -52,8 +58,8 @@ version of the core.
 
 ## Pre-publish checklist
 
-- [ ] No nested module `require`s core `v0.0.0` (the dev placeholder).
-- [ ] `replace` directives onto the core are removed (or intentionally dev-only).
+- [ ] Every nested module `require`s a real, published core tag (never `v0.0.0`).
+- [ ] `replace` directives onto the core are intentionally dev-only (ignored by consumers).
 - [ ] `make ci` and `make modules` are green.
 - [ ] The live `examples/roundtrip` E2E passes against staging.
 - [ ] `CHANGELOG`/release notes updated; compatibility table in `README.md` current.
