@@ -27,7 +27,7 @@ import (
 )
 
 func main() {
-	dsn := os.Getenv("GC_DSN")
+	dsn := normalizeDSN(os.Getenv("GC_DSN"))
 	ingestionKey := os.Getenv("GC_INGESTION_KEY")
 	offline := false
 	switch {
@@ -127,6 +127,13 @@ func isLocalDSN(raw string) bool {
 	}
 	host := strings.ToLower(u.Hostname())
 	return host == "localhost" || host == "local.invalid" || host == "::1" || strings.HasPrefix(host, "127.")
+}
+
+func normalizeDSN(raw string) string {
+	if raw == "" || strings.Contains(raw, "://") {
+		return raw
+	}
+	return "http://" + raw
 }
 
 func fatalf(format string, args ...any) {
