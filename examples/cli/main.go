@@ -157,9 +157,13 @@ func runWorker(ctx context.Context) {
 	wg.Wait()
 }
 
-var (
-	errLimitExceeded = errors.New("transaction limit exceeded")
-	errEmptyOrder    = errors.New("order has no line items")
+type reconcileError string
+
+func (e reconcileError) Error() string { return string(e) }
+
+const (
+	errLimitExceeded reconcileError = "transaction limit exceeded"
+	errEmptyOrder    reconcileError = "order has no line items"
 )
 
 func classify(err error) string {

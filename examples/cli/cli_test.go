@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -55,7 +56,8 @@ func TestDisabled_NoNetwork(t *testing.T) {
 // prime directive.
 func TestDeadBackend_NeverBlocksOrPanics(t *testing.T) {
 	client, err := gc.New(gc.Config{
-		DSN:        "http://127.0.0.1:1", // connection refused
+		DSN:        "http://ingest.example",
+		HTTPClient: &http.Client{Transport: failingTransport{}},
 		MaxRetries: 1,
 		RetryMax:   10 * time.Millisecond,
 	})
@@ -79,4 +81,10 @@ func TestDeadBackend_NeverBlocksOrPanics(t *testing.T) {
 	if client.Stats().Captured == 0 {
 		t.Errorf("expected captured > 0")
 	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("offline delivery failure")
 }

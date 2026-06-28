@@ -16,7 +16,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,11 +27,24 @@ import (
 )
 
 func main() {
-	offline := os.Getenv("GC_DSN") == ""
+	dsn := os.Getenv("GC_DSN")
+	ingestionKey := os.Getenv("GC_INGESTION_KEY")
+	offline := false
+	switch {
+	case dsn == "" && ingestionKey == "":
+		dsn = "https://local.invalid"
+		offline = true
+	case dsn == "":
+		fatalf("GC_DSN must be set when GC_INGESTION_KEY is configured")
+	case ingestionKey == "" && !isLocalDSN(dsn):
+		fatalf("GC_INGESTION_KEY must be set when GC_DSN points to a non-local backend")
+	case ingestionKey == "":
+		offline = true
+	}
 
 	cfg := gc.Config{
-		DSN:           envOr("GC_DSN", "https://local.invalid"),
-		IngestionKey:  os.Getenv("GC_INGESTION_KEY"),
+		DSN:           dsn,
+		IngestionKey:  ingestionKey,
 		ServiceName:   "explicit-client-example",
 		Env:           "examples",
 		Debug:         offline, // print events locally when no backend
@@ -93,7 +108,7 @@ func runWorker(client *gc.Client) {
 // doesn't abort the example.
 func fire(h http.Handler, path string) {
 	defer func() { _ = recover() }()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
+	req := httptest.NewRequest(http.MethodGet, path, nil)
 	h.ServeHTTP(httptest.NewRecorder(), req)
 }
 
@@ -105,11 +120,13 @@ func (drop) RoundTrip(*http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody, Header: make(http.Header)}, nil
 }
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func isLocalDSN(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
 	}
-	return fallback
+	host := strings.ToLower(u.Hostname())
+	return host == "localhost" || host == "local.invalid" || host == "::1" || strings.HasPrefix(host, "127.")
 }
 
 func fatalf(format string, args ...any) {

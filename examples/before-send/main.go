@@ -33,8 +33,10 @@ const attrAuthorization = "authorization"
 
 func main() {
 	piiKey := os.Getenv("GC_PII_KEY")
-	if piiKey == "" {
+	if piiKey == "" && os.Getenv("GC_DSN") == "" {
 		piiKey = "dev-only-not-a-secret"
+	} else if piiKey == "" {
+		fatalf("GC_PII_KEY must be set when GC_DSN is configured")
 	}
 
 	cfg := gc.Config{
@@ -73,8 +75,8 @@ func main() {
 	// 2) An error carrying secret attributes — the secrets are removed.
 	gc.CaptureError(ctx, errors.New("payment gateway rejected charge"),
 		gc.WithAttributes(gc.Attributes{
-			attrAuthorization: "Bearer sk_live_supersecret",
-			"card_number":     "4242 4242 4242 4242",
+			attrAuthorization: "Bearer DEMO_TOKEN_NOT_REAL",
+			"card_number":     "demo-card-number-not-real",
 			"gateway":         "stripe", // kept
 		}))
 

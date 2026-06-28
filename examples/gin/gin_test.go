@@ -74,7 +74,7 @@ func newTestRouter(client *gc.Client) *gin.Engine {
 		ctx = gc.WithScope(ctx, func(s *gc.Scope) { s.SetSessionID(c.Query("sid")) })
 		c.Request = c.Request.WithContext(ctx)
 
-		_ = c.Error(errPaymentDeclined)
+		_ = c.Error(&paymentError{})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "charge failed"})
 	})
 
@@ -147,8 +147,6 @@ func TestPanic_CapturedReRaisedRecovered(t *testing.T) {
 // delivered payload. Asserting PII redaction therefore belongs at the wire level;
 // see examples/before-send/before_send_test.go (TestScrubAndHash_OnTheWire), which
 // inspects the actual bytes via a custom HTTPClient transport.
-
-var errPaymentDeclined = &paymentError{}
 
 type paymentError struct{}
 
