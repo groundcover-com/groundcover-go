@@ -10,10 +10,8 @@ This repository contains the groundcover Go runtime SDK. The following rules are
 ## Git authorship (enforced)
 
 - **AI agents must never author commits.** The `commit-author-check` CI job fails
-  any commit whose author or committer name/email looks like an AI/service
-  identity (for example `cursor`, `copilot`, `bot`, `claude-code`, `gpt`,
-  `devin-ai`, ...). The check intentionally allows ordinary human names, even
-  when they overlap with AI product names.
+  any commit whose author or committer name/email looks like an AI identity
+  (for example `cursor`, `copilot`, `bot`, `claude`, `gpt`, `devin`, ...).
 - Always commit using a real human `user.name` / `user.email`.
 - Do **not** amend or force-push shared branches. Open a PR instead.
 - One commit per logical change, with a descriptive message.

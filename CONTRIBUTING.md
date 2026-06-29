@@ -12,9 +12,7 @@ feature requests are very welcome.
 ## Internal development
 
 - Use a real human git identity. AI agents must never author commits; this is
-  enforced by the `commit-author-check` CI job (see `AGENTS.md`). Human names
-  are allowed even when they overlap with AI product names; AI/service account
-  identities are not.
+  enforced by the `commit-author-check` CI job (see `AGENTS.md`).
 - Run `make ci` locally before opening a PR. It runs build, `go vet`,
   `golangci-lint`, and the race-enabled test suite across the supported Go
   majors.
