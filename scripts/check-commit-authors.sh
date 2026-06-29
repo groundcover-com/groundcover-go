@@ -18,8 +18,10 @@ else
   fi
 fi
 
-# Case-insensitive substrings that indicate a non-human identity.
-banned_regex='(cursor|copilot|\[bot\]|-bot|bot@|claude|anthropic|gpt|openai|chatgpt|codex|devin|sweep|githubactions|github-actions|noreply@github\.com)'
+# Case-insensitive substrings that indicate a non-human identity. Do not ban
+# GitHub noreply addresses: humans commonly use them, and GitHub web/squash
+# merges use GitHub <noreply@github.com> as the committer.
+banned_regex='(cursor|copilot|\[bot\]|-bot|bot@|claude|anthropic|gpt|openai|chatgpt|codex|devin|sweep|githubactions|github-actions)'
 
 fail=0
 while IFS=$'\t' read -r sha an ae cn ce; do
