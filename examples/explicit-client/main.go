@@ -38,8 +38,6 @@ func main() {
 		fatalf("GC_DSN must be set when GC_INGESTION_KEY is configured")
 	case ingestionKey == "" && !isLocalDSN(dsn):
 		fatalf("GC_INGESTION_KEY must be set when GC_DSN points to a non-local backend")
-	case ingestionKey == "":
-		offline = true
 	}
 
 	cfg := gc.Config{
@@ -108,7 +106,7 @@ func runWorker(client *gc.Client) {
 // doesn't abort the example.
 func fire(h http.Handler, path string) {
 	defer func() { _ = recover() }()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
+	req := httptest.NewRequest(http.MethodGet, path, nil)
 	h.ServeHTTP(httptest.NewRecorder(), req)
 }
 

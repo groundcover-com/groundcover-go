@@ -85,7 +85,7 @@ func TestScrubAndHash_OnTheWire(t *testing.T) {
 	if wire == "" {
 		t.Fatal("nothing delivered")
 	}
-	for _, leak := range []string{"super-secret-token", attrAuthorization, "alice@secret.example", "carol@customer.com"} {
+	for _, leak := range []string{"super-secret-token", attrAuthorization, "user-1", "alice@secret.example", "carol@customer.com"} {
 		if strings.Contains(wire, leak) {
 			t.Errorf("PII LEAK: %q present on the wire", leak)
 		}
