@@ -21,6 +21,8 @@ const (
 // When the SDK is consumed as a tagged module dependency, Version is the tag
 // (for example "0.1.1"). When running directly from source (go test / go run
 // inside this repo), build metadata has no tag and Version is "dev".
+//
+//nolint:gochecknoglobals // init-once from build metadata; exported for callers and telemetry
 var Version = resolveVersion()
 
 func resolveVersion() string {
