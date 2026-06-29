@@ -141,3 +141,32 @@ func TestEstimateValueSize(t *testing.T) {
 		t.Fatal("slice size should sum element sizes")
 	}
 }
+
+func TestVersionNonEmpty(t *testing.T) {
+	if Version == "" {
+		t.Fatal("Version must not be empty")
+	}
+}
+
+func TestModulePathFromGoMod(t *testing.T) {
+	if got := modulePathFromGoMod(); got == "" {
+		t.Fatal("module path must not be empty")
+	}
+}
+
+func TestNormalizeModuleVersion(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"v0.1.1", "0.1.1"},
+		{"0.1.1", "0.1.1"},
+		{"(devel)", ""},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		if got := normalizeModuleVersion(tc.in); got != tc.want {
+			t.Errorf("normalizeModuleVersion(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
