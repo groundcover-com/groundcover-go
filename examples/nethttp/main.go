@@ -14,12 +14,12 @@ import (
 	"os"
 	"time"
 
-	groundcover "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go"
 	gchttp "github.com/groundcover-com/groundcover-go/nethttp"
 )
 
 func main() {
-	if err := groundcover.Init(groundcover.Config{
+	if err := gc.Init(gc.Config{
 		DSN:          envOr("GC_DSN", "https://example.invalid"),
 		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
 		ServiceName:  "examples-nethttp",
@@ -27,7 +27,7 @@ func main() {
 	}); err != nil {
 		fatalf("init: %v", err)
 	}
-	defer func() { _ = groundcover.CloseTimeout(5 * time.Second) }()
+	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/panic", func(http.ResponseWriter, *http.Request) {
@@ -48,7 +48,7 @@ func main() {
 		handler.ServeHTTP(rec, req)
 	}()
 
-	fmt.Printf("served /panic; captured=%d\n", groundcover.GlobalStats().Captured)
+	fmt.Printf("served /panic; captured=%d\n", gc.GlobalStats().Captured)
 }
 
 func envOr(key, fallback string) string {
