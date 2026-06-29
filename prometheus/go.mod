@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/VictoriaMetrics/metrics v1.44.0
-	github.com/groundcover-com/groundcover-go v0.0.0
+	github.com/groundcover-com/groundcover-go v0.1.0
 )
 
 require (
