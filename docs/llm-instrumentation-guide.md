@@ -56,7 +56,13 @@ Optional integrations (only if the service uses them) are separate modules:
 | Need | Import |
 | ---- | ------ |
 | net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` |
+| Echo middleware | `github.com/groundcover-com/groundcover-go/contrib/echo` |
+| FastHTTP middleware | `github.com/groundcover-com/groundcover-go/contrib/fasthttp` |
+| Fiber middleware | `github.com/groundcover-com/groundcover-go/contrib/fiber` |
 | Gin middleware | `github.com/groundcover-com/groundcover-go/contrib/gin` |
+| gRPC interceptors | `github.com/groundcover-com/groundcover-go/contrib/grpc` |
+| Iris middleware | `github.com/groundcover-com/groundcover-go/contrib/iris` |
+| Negroni middleware | `github.com/groundcover-com/groundcover-go/contrib/negroni` |
 | Prometheus metrics bridge | `github.com/groundcover-com/groundcover-go/prometheus` |
 
 ## 2. Initialize once, at the top of `main`
@@ -317,7 +323,7 @@ If your errors or attributes may carry PII, write a `BeforeSend` scrubber.
 
 1. Is there a `main`? → add `Init` + deferred `Close` there. If multiple binaries,
    instrument each `main`.
-2. Is it an HTTP server (net/http or gin)? → add the matching middleware; that
+2. Is it an HTTP server (net/http, Echo, Fiber, Gin, Iris, Negroni, or fasthttp)? → add the matching middleware; that
    covers panics and request scope for free.
 3. For each place that currently logs or returns an error that matters
    (handlers, background workers, scheduled jobs), add a single

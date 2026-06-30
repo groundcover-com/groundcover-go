@@ -58,7 +58,7 @@ tidy: ## Tidy and vendor the core module dependencies.
 	$(GO) mod tidy
 	@if [ -d vendor ]; then $(GO) mod vendor; fi
 
-NESTED_MODULES := prometheus contrib/gin examples
+NESTED_MODULES := prometheus contrib/gin contrib/echo contrib/fiber contrib/fasthttp contrib/iris contrib/negroni contrib/grpc examples
 
 .PHONY: modules
 modules: ## Build and test the nested modules (contrib, prometheus, examples).

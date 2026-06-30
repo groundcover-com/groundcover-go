@@ -96,8 +96,15 @@ func main() {
 | Module | Import path | Adds |
 | ------ | ----------- | ---- |
 | net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` | stdlib only (part of core) |
+| Echo middleware | `github.com/groundcover-com/groundcover-go/contrib/echo` | `github.com/labstack/echo/v4` |
+| FastHTTP middleware | `github.com/groundcover-com/groundcover-go/contrib/fasthttp` | `github.com/valyala/fasthttp` |
+| Fiber middleware | `github.com/groundcover-com/groundcover-go/contrib/fiber` | `github.com/gofiber/fiber/v2` |
 | Gin middleware | `github.com/groundcover-com/groundcover-go/contrib/gin` | `github.com/gin-gonic/gin` |
+| gRPC interceptors | `github.com/groundcover-com/groundcover-go/contrib/grpc` | `google.golang.org/grpc` |
+| Iris middleware | `github.com/groundcover-com/groundcover-go/contrib/iris` | `github.com/kataras/iris/v12` |
+| Negroni middleware | `github.com/groundcover-com/groundcover-go/contrib/negroni` | `github.com/urfave/negroni/v3` |
 | Prometheus bridge | `github.com/groundcover-com/groundcover-go/prometheus` | `github.com/VictoriaMetrics/metrics` |
+
 
 Each optional integration with third-party dependencies is a **separate Go
 module**, so the core `go.sum` stays dependency-free.
