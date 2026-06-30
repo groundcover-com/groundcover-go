@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,10 +13,11 @@ import (
 	"os"
 	"time"
 
-	gc "github.com/groundcover-com/groundcover-go"
-	gciris "github.com/groundcover-com/groundcover-go/contrib/iris"
 	"github.com/kataras/iris/v12"
 	"github.com/kataras/iris/v12/middleware/recover"
+
+	gc "github.com/groundcover-com/groundcover-go"
+	gciris "github.com/groundcover-com/groundcover-go/contrib/iris"
 )
 
 func main() {
@@ -37,7 +39,7 @@ func main() {
 	})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/checkout", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/checkout", nil)
 	app.ServeHTTP(rec, req)
 
 	fmt.Printf("served /checkout -> %d; captured=%d\n", rec.Code, gc.GlobalStats().Captured)

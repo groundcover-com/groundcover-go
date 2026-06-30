@@ -7,8 +7,9 @@ import (
 	"context"
 	"net/http"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"github.com/urfave/negroni/v3"
+
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 type config struct {
@@ -41,6 +42,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http
 	ctx := seedScope(r.Context(), m.cfg.client)
 	r = r.WithContext(ctx)
 
+	//nolint:contextcheck // capture must read the request context at panic time, not entry time
 	defer func() {
 		if rec := recover(); rec != nil {
 			captureRecovered(r.Context(), m.cfg.client, rec, requestAttributes(r))

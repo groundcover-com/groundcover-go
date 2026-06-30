@@ -2,13 +2,15 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
+
 	gc "github.com/groundcover-com/groundcover-go"
 	gcfiber "github.com/groundcover-com/groundcover-go/contrib/fiber"
-	"github.com/gofiber/fiber/v2"
 )
 
 type recorder struct {
@@ -39,7 +41,7 @@ func TestCheckout_CapturesHandledError(t *testing.T) {
 	app.Use(gcfiber.Middleware(gcfiber.WithClient(client)))
 	app.Get("/checkout", func(*fiber.Ctx) error { return errors.New("checkout failed") })
 
-	resp, err := app.Test(httptest.NewRequest("GET", "/checkout", nil))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout", nil))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

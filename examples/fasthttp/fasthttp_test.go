@@ -4,9 +4,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/valyala/fasthttp"
+
 	gc "github.com/groundcover-com/groundcover-go"
 	gcfasthttp "github.com/groundcover-com/groundcover-go/contrib/fasthttp"
-	"github.com/valyala/fasthttp"
 )
 
 type recorder struct {

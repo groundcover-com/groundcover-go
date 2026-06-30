@@ -7,8 +7,9 @@ package echo
 import (
 	"context"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"github.com/labstack/echo/v4"
+
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 type config struct {

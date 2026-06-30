@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/urfave/negroni/v3"
+
 	gc "github.com/groundcover-com/groundcover-go"
 	gcnegroni "github.com/groundcover-com/groundcover-go/contrib/negroni"
-	"github.com/urfave/negroni/v3"
 )
 
 func newDropClient(t *testing.T) *gc.Client {

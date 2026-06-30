@@ -5,15 +5,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
+
 	gc "github.com/groundcover-com/groundcover-go"
 	gcfiber "github.com/groundcover-com/groundcover-go/contrib/fiber"
-	"github.com/gofiber/fiber/v2"
 )
 
 func main() {
@@ -33,7 +36,7 @@ func main() {
 		return errors.New("checkout failed: out of stock")
 	})
 
-	resp, err := app.Test(httptest.NewRequest("GET", "/checkout", nil))
+	resp, err := app.Test(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/checkout", nil))
 	if err != nil {
 		fatalf("request: %v", err)
 	}

@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	gc "github.com/groundcover-com/groundcover-go"
-	gcfiber "github.com/groundcover-com/groundcover-go/contrib/fiber"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+
+	gc "github.com/groundcover-com/groundcover-go"
+	gcfiber "github.com/groundcover-com/groundcover-go/contrib/fiber"
 )
 
 func newDropClient(t *testing.T) *gc.Client {
@@ -41,7 +43,7 @@ func TestFiberCapturesPanicAndReRaises(t *testing.T) {
 	app.Use(gcfiber.Middleware(gcfiber.WithClient(client)))
 	app.Get("/boom", func(*fiber.Ctx) error { panic("fiber boom") })
 
-	resp, err := app.Test(httptest.NewRequest("GET", "/boom", nil))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/boom", nil))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -57,7 +59,7 @@ func TestFiberCapturesHandlerErrors(t *testing.T) {
 	app := newApp(client)
 	app.Get("/err", func(*fiber.Ctx) error { return errors.New("handler error") })
 
-	resp, err := app.Test(httptest.NewRequest("GET", "/err", nil))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/err", nil))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -73,7 +75,7 @@ func TestFiberHappyPath(t *testing.T) {
 	app := newApp(client)
 	app.Get("/ok", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
-	resp, err := app.Test(httptest.NewRequest("GET", "/ok", nil))
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/ok", nil))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

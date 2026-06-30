@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
-	gc "github.com/groundcover-com/groundcover-go"
-	gciris "github.com/groundcover-com/groundcover-go/contrib/iris"
 	"github.com/kataras/iris/v12"
 	irishttptest "github.com/kataras/iris/v12/httptest"
 	"github.com/kataras/iris/v12/middleware/recover"
+
+	gc "github.com/groundcover-com/groundcover-go"
+	gciris "github.com/groundcover-com/groundcover-go/contrib/iris"
 )
 
 func newDropClient(t *testing.T) *gc.Client {

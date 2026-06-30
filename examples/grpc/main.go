@@ -10,11 +10,12 @@ import (
 	"os"
 	"time"
 
-	gc "github.com/groundcover-com/groundcover-go"
-	gcgrpc "github.com/groundcover-com/groundcover-go/contrib/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	gc "github.com/groundcover-com/groundcover-go"
+	gcgrpc "github.com/groundcover-com/groundcover-go/contrib/grpc"
 )
 
 func main() {

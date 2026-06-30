@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valyala/fasthttp"
+
 	gc "github.com/groundcover-com/groundcover-go"
 	gcfasthttp "github.com/groundcover-com/groundcover-go/contrib/fasthttp"
-	"github.com/valyala/fasthttp"
 )
 
 func newDropClient(t *testing.T) *gc.Client {

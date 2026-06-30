@@ -7,8 +7,9 @@ package fiber
 import (
 	"context"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"github.com/gofiber/fiber/v2"
+
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 type config struct {

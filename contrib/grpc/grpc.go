@@ -8,8 +8,9 @@ import (
 	"context"
 	"strings"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"google.golang.org/grpc"
+
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 type config struct {

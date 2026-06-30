@@ -13,9 +13,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/labstack/echo/v4"
+
 	gc "github.com/groundcover-com/groundcover-go"
 	gcecho "github.com/groundcover-com/groundcover-go/contrib/echo"
-	"github.com/labstack/echo/v4"
 )
 
 func main() {

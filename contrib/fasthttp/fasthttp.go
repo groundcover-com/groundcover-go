@@ -6,8 +6,9 @@ package fasthttp
 import (
 	"context"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"github.com/valyala/fasthttp"
+
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 type config struct {

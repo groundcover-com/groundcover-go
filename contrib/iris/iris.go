@@ -7,8 +7,9 @@ package iris
 import (
 	"context"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"github.com/kataras/iris/v12"
+
+	gc "github.com/groundcover-com/groundcover-go"
 )
 
 type config struct {
