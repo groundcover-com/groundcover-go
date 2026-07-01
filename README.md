@@ -1,6 +1,10 @@
 # groundcover-go
 
-The official [groundcover](https://groundcover.com) runtime SDK for Go.
+The official [groundcover](https://groundcover.com) error tracking library for Go.
+
+> **Note:** This library is for instrumenting Go applications with groundcover
+> error tracking. For the full groundcover client SDK library, see
+> [groundcover-com/groundcover-sdk-go](https://github.com/groundcover-com/groundcover-sdk-go).
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/groundcover-com/groundcover-go.svg)](https://pkg.go.dev/github.com/groundcover-com/groundcover-go)
 [![CI](https://github.com/groundcover-com/groundcover-go/actions/workflows/ci.yml/badge.svg)](https://github.com/groundcover-com/groundcover-go/actions/workflows/ci.yml)
@@ -11,7 +15,7 @@ The official [groundcover](https://groundcover.com) runtime SDK for Go.
 > are planned on top of the same shared core.
 
 `groundcover-go` captures application errors and panics and ships them to
-groundcover with a strong safety guarantee: **the SDK never affects the host
+groundcover with a strong safety guarantee: **the library never affects the host
 application**. Every entry point and background task is panic-guarded, memory is
 strictly bounded, and capturing an error never blocks the caller.
 
@@ -76,7 +80,7 @@ func main() {
 ## Design principles
 
 1. **Never affect the host.** All public entry points and goroutines are
-   panic-guarded; SDK-internal faults are swallowed (self-metric + throttled log).
+   panic-guarded; library-internal faults are swallowed (self-metric + throttled log).
 2. **Memory is always bounded.** A ring buffer bounded by both item count and a
    byte budget drops the *oldest* events on overflow.
 3. **Capture never blocks.** Callers enrich and perform one non-blocking hand-off.
@@ -100,16 +104,16 @@ module**, so the core `go.sum` stays dependency-free.
 
 ## Runtime support
 
-The SDK supports the **two most recent Go majors** (today **1.25** and **1.26**),
+The library supports the **two most recent Go majors** (today **1.25** and **1.26**),
 matching dd-trace-go / otel-go / sentry-go. The `go.mod` floor is the older of
 the two.
 
-| SDK version | Supported Go |
-| ----------- | ------------ |
-| v0.x        | 1.25, 1.26   |
+| Library version | Supported Go |
+| --------------- | ------------ |
+| v0.x            | 1.25, 1.26   |
 
-Every released SDK version keeps working for the runtime it shipped against;
-pin an older SDK release if you run an older Go.
+Every released library version keeps working for the runtime it shipped against;
+pin an older library release if you run an older Go.
 
 ## Development
 
