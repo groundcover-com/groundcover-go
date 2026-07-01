@@ -1,13 +1,10 @@
 package groundcover
 
 import (
-	_ "embed"
+	"reflect"
 	"runtime/debug"
 	"strings"
 )
-
-//go:embed go.mod
-var goMod string
 
 const (
 	sdkName     = "groundcover-go" // pragma: allowlist secret
@@ -19,6 +16,21 @@ const (
 	devVersion = "dev"
 )
 
+// pkgMarker is an unexported empty type used to discover this package's
+// import path at runtime via reflection. Because version.go lives in the
+// module's root package, that import path equals the module path, so the
+// value can be looked up directly in runtime/debug.BuildInfo without
+// embedding or parsing go.mod.
+type pkgMarker struct{}
+
+// modulePath returns the module path of this SDK. It is derived from the
+// package that pkgMarker is declared in, so it stays correct even if the
+// module is renamed or forked (the fork's build info would report the fork's
+// module path, which matches the fork's package path).
+func modulePath() string {
+	return reflect.TypeOf(pkgMarker{}).PkgPath()
+}
+
 // Version returns the SDK version reported in telemetry (telemetry.sdk.version)
 // and the User-Agent header. It is resolved from the module's build metadata so
 // it matches the published git tag without a manual bump on each release.
@@ -29,8 +41,8 @@ const (
 // returns "dev". The resolution is cheap and safe to call from hot paths;
 // callers that want to avoid repeated work may cache the result themselves.
 func Version() string {
-	modulePath := modulePathFromGoMod()
-	if modulePath == "" {
+	mp := modulePath()
+	if mp == "" {
 		return devVersion
 	}
 	bi, ok := debug.ReadBuildInfo()
@@ -38,42 +50,18 @@ func Version() string {
 		return devVersion
 	}
 	for _, dep := range bi.Deps {
-		if dep.Path == modulePath {
+		if dep.Path == mp {
 			if v := normalizeModuleVersion(dep.Version); v != "" {
 				return v
 			}
 		}
 	}
-	if bi.Main.Path == modulePath {
+	if bi.Main.Path == mp {
 		if v := normalizeModuleVersion(bi.Main.Version); v != "" {
 			return v
 		}
 	}
 	return devVersion
-}
-
-// modulePathFromGoMod extracts the module path from the embedded go.mod.
-// It tolerates the whitespace and comment forms accepted by the go.mod grammar
-// (space or tab separation, trailing `// ...` comments).
-func modulePathFromGoMod() string {
-	for line := range strings.SplitSeq(goMod, "\n") {
-		line = strings.TrimSpace(stripLineComment(line))
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "module" {
-			continue
-		}
-		// A double-quoted module path is permitted by the go.mod grammar.
-		return strings.Trim(fields[1], `"`)
-	}
-	return ""
-}
-
-// stripLineComment removes a `// ...` trailing comment from a go.mod line.
-func stripLineComment(line string) string {
-	if i := strings.Index(line, "//"); i >= 0 {
-		return line[:i]
-	}
-	return line
 }
 
 func normalizeModuleVersion(v string) string {

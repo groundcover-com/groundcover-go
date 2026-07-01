@@ -148,9 +148,12 @@ func TestVersionNonEmpty(t *testing.T) {
 	}
 }
 
-func TestModulePathFromGoMod(t *testing.T) {
-	if got := modulePathFromGoMod(); got == "" {
-		t.Fatal("module path must not be empty")
+func TestModulePathMatchesRootPackage(t *testing.T) {
+	// version.go lives in the module root package, so modulePath must return
+	// the module path exactly.
+	const want = "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
+	if got := modulePath(); got != want {
+		t.Errorf("modulePath() = %q, want %q", got, want)
 	}
 }
 
@@ -167,20 +170,6 @@ func TestNormalizeModuleVersion(t *testing.T) {
 	for _, tc := range tests {
 		if got := normalizeModuleVersion(tc.in); got != tc.want {
 			t.Errorf("normalizeModuleVersion(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestStripLineComment(t *testing.T) {
-	tests := []struct{ in, want string }{
-		{"module example.com/foo", "module example.com/foo"},
-		{"module example.com/foo // comment", "module example.com/foo "},
-		{"// only comment", ""},
-		{"", ""},
-	}
-	for _, tc := range tests {
-		if got := stripLineComment(tc.in); got != tc.want {
-			t.Errorf("stripLineComment(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
