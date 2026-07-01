@@ -23,7 +23,7 @@ func main() {
 		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
 		ServiceName:  "examples-basic",
 		Env:          "examples",
-		Release:      gc.Version,
+		Release:      gc.Version(),
 	}); err != nil {
 		fatalf("init: %v", err)
 	}

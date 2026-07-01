@@ -54,7 +54,7 @@ func run() error {
 		IngestionKey:  env.ingestionKey,
 		ServiceName:   "groundcover-go-roundtrip",
 		Env:           "examples",
-		Release:       gc.Version,
+		Release:       gc.Version(),
 		FlushInterval: time.Second,
 	}); err != nil {
 		return fmt.Errorf("init: %w", err)

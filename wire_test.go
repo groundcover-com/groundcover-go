@@ -143,8 +143,8 @@ func TestEstimateValueSize(t *testing.T) {
 }
 
 func TestVersionNonEmpty(t *testing.T) {
-	if Version == "" {
-		t.Fatal("Version must not be empty")
+	if Version() == "" {
+		t.Fatal("Version() must not be empty")
 	}
 }
 
@@ -167,6 +167,20 @@ func TestNormalizeModuleVersion(t *testing.T) {
 	for _, tc := range tests {
 		if got := normalizeModuleVersion(tc.in); got != tc.want {
 			t.Errorf("normalizeModuleVersion(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestStripLineComment(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"module example.com/foo", "module example.com/foo"},
+		{"module example.com/foo // comment", "module example.com/foo "},
+		{"// only comment", ""},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		if got := stripLineComment(tc.in); got != tc.want {
+			t.Errorf("stripLineComment(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

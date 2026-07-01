@@ -7,7 +7,7 @@ import "encoding/json"
 const scalarSizeEstimate = 16
 
 // userAgent is the SDK identifier sent on the wire.
-func userAgent() string { return sdkName + "/" + Version }
+func userAgent() string { return sdkName + "/" + Version() }
 
 type wireFrame struct {
 	Filename string `json:"filename"`

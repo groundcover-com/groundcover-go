@@ -66,7 +66,7 @@ func detectResource(cfg Config) resource {
 	attrs := map[string]string{
 		"telemetry.sdk.name":         sdkName,
 		"telemetry.sdk.language":     sdkLanguage,
-		"telemetry.sdk.version":      Version,
+		"telemetry.sdk.version":      Version(),
 		"process.runtime.name":       "go",
 		"process.runtime.version":    runtime.Version(),
 		"os.type":                    runtime.GOOS,

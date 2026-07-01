@@ -43,7 +43,7 @@ func main() {
 	}
 	defer func() { _ = gc.CloseTimeout(5 * time.Second) }() // bounded flush on shutdown
 
-	fmt.Printf("reconciler starting (groundcover-go v%s)\n", gc.Version)
+	fmt.Printf("reconciler starting (groundcover-go v%s)\n", gc.Version()) // pragma: allowlist secret
 
 	// Batch-wide identity and scope live on the context; every capture made with
 	// this context inherits them.
