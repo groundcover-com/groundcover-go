@@ -230,6 +230,23 @@ across requests.
   r.Use(gcgin.New(gcgin.Options{}))
   ```
 
+- **Echo / Fiber / Iris:** same rule — register the framework's own recover
+  middleware **before** ours (`middleware.Recover()` for Echo, `recover.New()`
+  for Fiber and Iris). Fiber in particular does not recover handler panics by
+  itself, so without its recover middleware a re-raised panic crashes the
+  process.
+
+- **fasthttp / gRPC:** neither has built-in panic recovery. Our
+  middleware/interceptors re-raise after capturing; add your own recovery layer
+  above them if the process must survive handler panics. fasthttp handlers reach
+  the request scope via `gcfasthttp.ScopeContext(ctx)`.
+
+- **Client errors are not captured:** the Echo, Fiber, Iris, and gRPC
+  integrations skip client-side outcomes (HTTP status < 500; gRPC codes such as
+  `NotFound`, `InvalidArgument`, `Unauthenticated`). Router 404s and validation
+  failures never become error events. Plain (non-HTTP-status) errors returned
+  from handlers are always captured.
+
 - **Don't double-wrap:** wrapping a Gin engine in `nethttp.Middleware` *and* using
   `gcgin.New(...)` captures the same panic twice unless a terminating
   `gin.Recovery()` sits between the layers. Pick one middleware per server.

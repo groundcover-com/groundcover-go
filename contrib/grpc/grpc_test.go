@@ -64,6 +64,57 @@ func TestUnaryCapturesHandlerErrors(t *testing.T) {
 	}
 }
 
+func TestUnarySkipsClientErrors(t *testing.T) {
+	client := newDropClient(t)
+	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.WithClient(client))
+
+	for _, code := range []codes.Code{codes.NotFound, codes.InvalidArgument, codes.Unauthenticated, codes.Canceled} {
+		handler := grpc.UnaryHandler(func(context.Context, any) (any, error) {
+			return nil, status.Error(code, "client-side outcome")
+		})
+		_, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}, handler)
+		if err == nil {
+			t.Fatal("expected handler error")
+		}
+	}
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures for client-side status codes, got %d", got)
+	}
+}
+
+func TestUnaryCapturesBareContextDeadline(t *testing.T) {
+	client := newDropClient(t)
+	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.WithClient(client))
+	handler := grpc.UnaryHandler(func(context.Context, any) (any, error) {
+		return nil, context.DeadlineExceeded
+	})
+
+	_, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}, handler)
+	if err == nil {
+		t.Fatal("expected handler error")
+	}
+	if got := client.Stats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured deadline error, got %d", got)
+	}
+}
+
+func TestStreamCapturesHandlerErrors(t *testing.T) {
+	client := newDropClient(t)
+	interceptor := gcgrpc.StreamServerInterceptor(gcgrpc.WithClient(client))
+	handler := grpc.StreamHandler(func(any, grpc.ServerStream) error {
+		return status.Error(codes.Internal, "stream failed")
+	})
+
+	err := interceptor(nil, &stubServerStream{ctx: context.Background()}, &grpc.StreamServerInfo{FullMethod: "/test.Service/Stream"}, handler)
+	if err == nil {
+		t.Fatal("expected handler error")
+	}
+	if got := client.Stats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured stream error, got %d", got)
+	}
+}
+
 func TestStreamCapturesPanicAndReRaises(t *testing.T) {
 	client := newDropClient(t)
 	interceptor := gcgrpc.StreamServerInterceptor(gcgrpc.WithClient(client))

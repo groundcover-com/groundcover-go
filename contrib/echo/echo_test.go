@@ -67,6 +67,51 @@ func TestEchoCapturesHandlerErrors(t *testing.T) {
 	}
 }
 
+func TestEchoSkipsClientErrors(t *testing.T) {
+	client := newDropClient(t)
+	e := newEcho(client)
+	e.GET("/teapot", func(echo.Context) error {
+		return echo.NewHTTPError(http.StatusTeapot, "short and stout")
+	})
+
+	// Handler-returned 4xx HTTP errors are request outcomes, not faults.
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/teapot", nil))
+	// Router 404s flow through the middleware as echo.ErrNotFound and must not
+	// be captured either.
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/no-such-route", nil))
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures for client errors, got %d", got)
+	}
+}
+
+func TestEchoCapturesHTTP500Errors(t *testing.T) {
+	client := newDropClient(t)
+	e := newEcho(client)
+	e.GET("/ise", func(echo.Context) error {
+		return echo.NewHTTPError(http.StatusInternalServerError, "db down")
+	})
+
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ise", nil))
+
+	if got := client.Stats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured 5xx error, got %d", got)
+	}
+}
+
+func TestEchoErrorCaptureDisabled(t *testing.T) {
+	client := newDropClient(t)
+	e := echo.New()
+	e.Use(gcecho.Middleware(gcecho.WithClient(client), gcecho.WithErrorCapture(false)))
+	e.GET("/err", func(echo.Context) error { return errors.New("handler error") })
+
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/err", nil))
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures with error capture disabled, got %d", got)
+	}
+}
+
 func TestEchoHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	e := newEcho(client)

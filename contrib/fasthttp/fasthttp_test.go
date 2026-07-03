@@ -54,6 +54,30 @@ func TestFastHTTPCapturesPanicAndReRaises(t *testing.T) {
 	}
 }
 
+func TestFastHTTPScopeContext(t *testing.T) {
+	client := newDropClient(t)
+	handler := gcfasthttp.Middleware(func(ctx *fasthttp.RequestCtx) {
+		gcctx := gcfasthttp.ScopeContext(ctx)
+		if gcctx == context.Background() {
+			t.Fatal("expected a seeded scope context, got context.Background()")
+		}
+		client.CaptureMessage(gcctx, "from handler", gc.LevelError)
+	}, gcfasthttp.WithClient(client))
+
+	handler(newRequestCtx("GET", "http://example.com/scoped"))
+
+	if got := client.Stats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured message via scope context, got %d", got)
+	}
+}
+
+func TestFastHTTPScopeContextWithoutMiddleware(t *testing.T) {
+	ctx := newRequestCtx("GET", "http://example.com/raw")
+	if got := gcfasthttp.ScopeContext(ctx); got != context.Background() {
+		t.Fatalf("expected context.Background() fallback, got %v", got)
+	}
+}
+
 func TestFastHTTPHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	handler := gcfasthttp.Middleware(func(ctx *fasthttp.RequestCtx) {

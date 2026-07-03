@@ -1,7 +1,14 @@
 // Package grpc provides gRPC server interceptors that recover panics, capture
-// them (and optionally RPC errors) through groundcover, and seed a fresh request
-// scope. It is a separate module so the gRPC dependency never enters the core
-// SDK's go.sum.
+// them (and server-fault RPC errors) through the SDK, and seed a fresh
+// request scope. It is a separate module so the gRPC dependency never enters
+// the core SDK's go.sum.
+//
+// gRPC servers have no built-in panic recovery: the interceptors re-raise
+// captured panics, which terminates the process unless something above them
+// recovers. If the process must survive handler panics, install a recovery
+// interceptor ahead of these in the chain:
+//
+//	grpc.ChainUnaryInterceptor(recoveryInterceptor, gcgrpc.UnaryServerInterceptor())
 package grpc
 
 import (
@@ -9,6 +16,8 @@ import (
 	"strings"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	gc "github.com/groundcover-com/groundcover-go"
 )
@@ -27,7 +36,10 @@ func WithClient(c *gc.Client) Option {
 }
 
 // WithErrorCapture toggles capturing RPC handler errors as handled errors.
-// Enabled by default.
+// Enabled by default. Only server-fault status codes are captured (Unknown,
+// DeadlineExceeded, Unimplemented, Internal, Unavailable, DataLoss); client
+// and flow-control codes such as NotFound, InvalidArgument, or Unauthenticated
+// are never captured: they are request outcomes, not application faults.
 func WithErrorCapture(enabled bool) Option {
 	return func(cfg *config) { cfg.captureError = enabled }
 }
@@ -44,15 +56,13 @@ func UnaryServerInterceptor(opts ...Option) grpc.UnaryServerInterceptor {
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(ctx, cfg.client, rec, rpcAttributes(info.FullMethod))
+				captureRecovered(ctx, cfg.client, rec, panicAttributes(info.FullMethod))
 				panic(rec)
 			}
 		}()
 
 		resp, err = handler(ctx, req)
-		if cfg.captureError && err != nil {
-			captureError(ctx, cfg.client, err, rpcAttributes(info.FullMethod))
-		}
+		maybeCaptureRPCError(ctx, cfg, err, info.FullMethod)
 		return resp, err
 	}
 }
@@ -70,15 +80,13 @@ func StreamServerInterceptor(opts ...Option) grpc.StreamServerInterceptor {
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(ctx, cfg.client, rec, rpcAttributes(info.FullMethod))
+				captureRecovered(ctx, cfg.client, rec, panicAttributes(info.FullMethod))
 				panic(rec)
 			}
 		}()
 
 		err = handler(srv, wrapped)
-		if cfg.captureError && err != nil {
-			captureError(ctx, cfg.client, err, rpcAttributes(info.FullMethod))
-		}
+		maybeCaptureRPCError(ctx, cfg, err, info.FullMethod)
 		return err
 	}
 }
@@ -92,7 +100,49 @@ func (w *wrappedServerStream) Context() context.Context {
 	return w.ctx
 }
 
-func rpcAttributes(fullMethod string) gc.Option {
+func maybeCaptureRPCError(ctx context.Context, cfg config, err error, fullMethod string) {
+	if !cfg.captureError || err == nil {
+		return
+	}
+	code := rpcCode(err)
+	if !isServerFault(code) {
+		return
+	}
+	captureError(ctx, cfg.client, err, errorAttributes(fullMethod, code))
+}
+
+// rpcCode resolves the gRPC status code for err, mapping bare context errors
+// (context.Canceled, context.DeadlineExceeded) to their canonical codes.
+func rpcCode(err error) codes.Code {
+	if s, ok := status.FromError(err); ok {
+		return s.Code()
+	}
+	return status.FromContextError(err).Code()
+}
+
+// isServerFault reports whether the status code indicates a server-side fault
+// worth capturing, per OTel RPC server span-status conventions.
+func isServerFault(code codes.Code) bool {
+	switch code {
+	case codes.Unknown, codes.DeadlineExceeded, codes.Unimplemented,
+		codes.Internal, codes.Unavailable, codes.DataLoss:
+		return true
+	default:
+		return false
+	}
+}
+
+func panicAttributes(fullMethod string) gc.Option {
+	return gc.WithAttributes(baseAttributes(fullMethod))
+}
+
+func errorAttributes(fullMethod string, code codes.Code) gc.Option {
+	attrs := baseAttributes(fullMethod)
+	attrs["rpc.grpc.status_code"] = int(code)
+	return gc.WithAttributes(attrs)
+}
+
+func baseAttributes(fullMethod string) gc.Attributes {
 	service, method := parseFullMethod(fullMethod)
 	attrs := gc.Attributes{
 		"rpc.system": "grpc",
@@ -103,7 +153,7 @@ func rpcAttributes(fullMethod string) gc.Option {
 	if method != "" {
 		attrs["rpc.method"] = method
 	}
-	return gc.WithAttributes(attrs)
+	return attrs
 }
 
 func parseFullMethod(fullMethod string) (service, method string) {

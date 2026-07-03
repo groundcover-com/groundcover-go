@@ -40,9 +40,9 @@
 //   - Capture at boundaries with CaptureError(ctx, err); keep returning the error
 //     as before — the SDK observes, it never alters control flow.
 //   - Attach identity/attributes to the request context with SetUser / WithScope.
-//   - Wrap HTTP servers with the nethttp middleware, or a contrib middleware
-//     (gin, echo, fiber, fasthttp, iris, negroni), to recover panics and seed
-//     and capture panics automatically.
+//   - Wrap HTTP servers with the nethttp middleware, a contrib middleware
+//     (gin, echo, fiber, fasthttp, iris, negroni), or the contrib/grpc
+//     interceptors, to capture panics and seed a per-request scope automatically.
 //   - Pass the real error value (not a formatted string) so the type is extracted
 //     and grouping works; always thread the request context.
 //   - Scrub PII/secrets in BeforeSend; pseudonymize identity with an IdentityHasher.

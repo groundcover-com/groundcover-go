@@ -37,6 +37,10 @@ func main() {
 	app.Get("/checkout", func(ctx iris.Context) {
 		ctx.StopWithError(http.StatusInternalServerError, errors.New("checkout failed: out of stock"))
 	})
+	// Iris requires building the router before serving without app.Run/Listen.
+	if err := app.Build(); err != nil {
+		fatalf("build: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.com/checkout", nil)

@@ -70,6 +70,68 @@ func TestFiberCapturesHandlerErrors(t *testing.T) {
 	}
 }
 
+func TestFiberSkipsClientErrors(t *testing.T) {
+	client := newDropClient(t)
+	app := newApp(client)
+	app.Get("/teapot", func(*fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusTeapot, "short and stout")
+	})
+
+	// Handler-returned 4xx HTTP errors are request outcomes, not faults.
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/teapot", nil))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// Router 404s flow through the middleware as fiber.ErrNotFound and must not
+	// be captured either.
+	resp, err = app.Test(httptest.NewRequest(http.MethodGet, "/no-such-route", nil))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures for client errors, got %d", got)
+	}
+}
+
+func TestFiberCapturesHTTP500Errors(t *testing.T) {
+	client := newDropClient(t)
+	app := newApp(client)
+	app.Get("/ise", func(*fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusInternalServerError, "db down")
+	})
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/ise", nil))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := client.Stats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured 5xx error, got %d", got)
+	}
+}
+
+func TestFiberErrorCaptureDisabled(t *testing.T) {
+	client := newDropClient(t)
+	app := fiber.New()
+	app.Use(gcfiber.Middleware(gcfiber.WithClient(client), gcfiber.WithErrorCapture(false)))
+	app.Get("/err", func(*fiber.Ctx) error { return errors.New("handler error") })
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/err", nil))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures with error capture disabled, got %d", got)
+	}
+}
+
 func TestFiberHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	app := newApp(client)

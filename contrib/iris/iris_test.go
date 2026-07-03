@@ -64,6 +64,38 @@ func TestIrisCapturesContextErrors(t *testing.T) {
 	}
 }
 
+func TestIrisSkipsClientErrors(t *testing.T) {
+	client := newDropClient(t)
+	app := newApp(client)
+	app.Get("/teapot", func(ctx iris.Context) {
+		ctx.StopWithError(http.StatusTeapot, errors.New("short and stout"))
+	})
+
+	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
+	e.GET("/teapot").Expect().Status(http.StatusTeapot)
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures for client errors, got %d", got)
+	}
+}
+
+func TestIrisErrorCaptureDisabled(t *testing.T) {
+	client := newDropClient(t)
+	app := iris.New()
+	app.Use(recover.New())
+	app.Use(gciris.Middleware(gciris.WithClient(client), gciris.WithErrorCapture(false)))
+	app.Get("/err", func(ctx iris.Context) {
+		ctx.StopWithError(http.StatusInternalServerError, errors.New("handler error"))
+	})
+
+	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
+	e.GET("/err").Expect().Status(http.StatusInternalServerError)
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures with error capture disabled, got %d", got)
+	}
+}
+
 func TestIrisHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	app := newApp(client)
