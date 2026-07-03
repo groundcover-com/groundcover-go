@@ -34,7 +34,7 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gcgin.Middleware())
+	r.Use(gcgin.New(gcgin.Options{}))
 	r.GET("/checkout", func(c *gin.Context) {
 		_ = c.Error(errors.New("checkout failed: out of stock"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "checkout failed"})

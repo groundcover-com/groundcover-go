@@ -10,34 +10,34 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	groundcover "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 	gcgin "github.com/groundcover-com/groundcover-go/contrib/gin"
 )
 
-func newDropClient(t *testing.T) *groundcover.Client {
+// initDropClient installs a package-level client that drops every event in
+// BeforeSend, so tests observe captures via GlobalStats without any delivery.
+func initDropClient(t *testing.T) {
 	t.Helper()
-	c, err := groundcover.New(groundcover.Config{
+	if err := gc.Init(gc.Config{
 		DSN:           "https://example.invalid",
 		FlushInterval: time.Hour,
-		BeforeSend:    func(*groundcover.Event) *groundcover.Event { return nil },
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+		BeforeSend:    func(*gc.Event) *gc.Event { return nil },
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close(context.Background()) })
-	return c
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 }
 
-func newEngine(client *groundcover.Client) *gin.Engine {
+func newEngine(opts gcgin.Options) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(gcgin.Middleware(gcgin.WithClient(client)))
+	r.Use(gcgin.New(opts))
 	return r
 }
 
 func TestGinCapturesPanicAndReRaises(t *testing.T) {
-	client := newDropClient(t)
-	r := newEngine(client)
+	initDropClient(t)
+	r := newEngine(gcgin.Options{})
 	r.GET("/boom", func(*gin.Context) { panic("gin boom") })
 
 	func() {
@@ -49,14 +49,14 @@ func TestGinCapturesPanicAndReRaises(t *testing.T) {
 		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
 	}()
 
-	if got := client.Stats().DroppedBeforeSend; got != 1 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
 		t.Fatalf("expected 1 captured panic, got %d", got)
 	}
 }
 
 func TestGinCapturesContextErrors(t *testing.T) {
-	client := newDropClient(t)
-	r := newEngine(client)
+	initDropClient(t)
+	r := newEngine(gcgin.Options{})
 	r.GET("/err", func(c *gin.Context) {
 		_ = c.Error(errors.New("handler error"))
 		c.Status(http.StatusInternalServerError)
@@ -64,30 +64,44 @@ func TestGinCapturesContextErrors(t *testing.T) {
 
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/err", nil))
 
-	if got := client.Stats().DroppedBeforeSend; got != 1 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
 		t.Fatalf("expected 1 captured context error, got %d", got)
 	}
 }
 
+func TestGinIgnoreContextErrors(t *testing.T) {
+	initDropClient(t)
+	r := newEngine(gcgin.Options{IgnoreContextErrors: true})
+	r.GET("/err", func(c *gin.Context) {
+		_ = c.Error(errors.New("handler error"))
+		c.Status(http.StatusInternalServerError)
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/err", nil))
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("context errors must not be captured when ignored, got %d", got)
+	}
+}
+
 func TestGinCapturesHandlerSetUser(t *testing.T) {
-	var rec groundcover.Event
-	client, err := groundcover.New(groundcover.Config{
+	var rec gc.Event
+	if err := gc.Init(gc.Config{
 		DSN:           "https://example.invalid",
 		FlushInterval: time.Hour,
-		BeforeSend: func(e *groundcover.Event) *groundcover.Event {
+		BeforeSend: func(e *gc.Event) *gc.Event {
 			rec = *e
 			return nil
 		},
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 
-	r := newEngine(client)
+	r := newEngine(gcgin.Options{})
 	r.GET("/err", func(c *gin.Context) {
 		// Handler sets the user on the request context, then records an error.
-		client.SetUser(c.Request.Context(), groundcover.User{ID: "gin-user"})
+		gc.SetUser(c.Request.Context(), gc.User{ID: "gin-user"})
 		_ = c.Error(errors.New("handler error"))
 		c.Status(http.StatusInternalServerError)
 	})
@@ -100,8 +114,8 @@ func TestGinCapturesHandlerSetUser(t *testing.T) {
 }
 
 func TestGinHappyPath(t *testing.T) {
-	client := newDropClient(t)
-	r := newEngine(client)
+	initDropClient(t)
+	r := newEngine(gcgin.Options{})
 	r.GET("/ok", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	rec := httptest.NewRecorder()
@@ -109,7 +123,7 @@ func TestGinHappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if client.Stats().Captured != 0 || client.Stats().DroppedBeforeSend != 0 {
-		t.Fatalf("no capture expected on happy path, stats=%+v", client.Stats())
+	if gc.GlobalStats().Captured != 0 || gc.GlobalStats().DroppedBeforeSend != 0 {
+		t.Fatalf("no capture expected on happy path, stats=%+v", gc.GlobalStats())
 	}
 }

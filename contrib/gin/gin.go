@@ -5,92 +5,55 @@
 package gin
 
 import (
-	"context"
-
 	"github.com/gin-gonic/gin"
 
-	groundcover "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 )
 
-type config struct {
-	client       *groundcover.Client
-	captureError bool
+// Options configures the middleware. The zero value is valid and enables the
+// recommended defaults: panics are recovered, captured, and re-raised, and
+// errors collected on the Gin context are captured as handled errors.
+type Options struct {
+	// IgnoreContextErrors turns OFF capturing errors collected on the Gin
+	// context via c.Error(...) (c.Errors). Panics recovered by the middleware
+	// are always captured regardless of this setting.
+	IgnoreContextErrors bool
 }
 
-// Option configures the middleware.
-type Option func(*config)
-
-// WithClient routes captures to an explicit client instead of the global one.
-func WithClient(c *groundcover.Client) Option {
-	return func(cfg *config) { cfg.client = c }
-}
-
-// WithErrorCapture toggles capturing errors collected on the Gin context
-// (c.Error(...)/c.Errors) as handled errors. Enabled by default.
-func WithErrorCapture(enabled bool) Option {
-	return func(cfg *config) { cfg.captureError = enabled }
-}
-
-// Middleware returns Gin middleware. Panics are captured as unhandled errors and
-// re-raised (so Gin's own recovery, if installed, still runs); collected
-// c.Errors are captured as handled errors.
-func Middleware(opts ...Option) gin.HandlerFunc {
-	cfg := config{captureError: true}
-	for _, o := range opts {
-		o(&cfg)
-	}
-
+// New returns Gin middleware that reports to the package-level default client
+// configured with the core SDK's Init. Panics are captured as unhandled errors
+// and re-raised (so Gin's own recovery, if installed, still runs); collected
+// c.Errors are captured as handled errors unless Options.IgnoreContextErrors
+// is set.
+func New(opts Options) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Seed a fresh, isolated scope for this request. The scope is mutable and
 		// shared, and we re-read c.Request.Context() at capture time, so a
 		// handler's SetUser/WithScope is reflected in the captured error.
-		c.Request = c.Request.WithContext(seedScope(c.Request.Context(), cfg.client))
+		c.Request = c.Request.WithContext(gc.WithIsolatedScope(c.Request.Context()))
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(c.Request.Context(), cfg.client, rec, requestAttributes(c))
+				gc.CaptureRecovered(c.Request.Context(), rec, requestAttributes(c))
 				panic(rec) // re-raise to Gin's recovery / the server
 			}
 		}()
 
 		c.Next()
 
-		if cfg.captureError {
+		if !opts.IgnoreContextErrors {
 			for _, e := range c.Errors {
-				captureError(c.Request.Context(), cfg.client, e.Err, requestAttributes(c))
+				gc.CaptureError(c.Request.Context(), e.Err, requestAttributes(c))
 			}
 		}
 	}
 }
 
-func requestAttributes(c *gin.Context) groundcover.Option {
-	return groundcover.WithAttributes(groundcover.Attributes{
+func requestAttributes(c *gin.Context) gc.Option {
+	return gc.WithAttributes(gc.Attributes{
 		"http.request.method":       c.Request.Method,
 		"url.path":                  c.Request.URL.Path,
 		"http.route":                c.FullPath(),
 		"http.response.status_code": c.Writer.Status(),
 	})
-}
-
-func seedScope(ctx context.Context, client *groundcover.Client) context.Context {
-	if client != nil {
-		return client.WithIsolatedScope(ctx)
-	}
-	return groundcover.WithIsolatedScope(ctx)
-}
-
-func captureRecovered(ctx context.Context, client *groundcover.Client, rec any, opts ...groundcover.Option) {
-	if client != nil {
-		client.CaptureRecovered(ctx, rec, opts...)
-		return
-	}
-	groundcover.CaptureRecovered(ctx, rec, opts...)
-}
-
-func captureError(ctx context.Context, client *groundcover.Client, err error, opts ...groundcover.Option) {
-	if client != nil {
-		client.CaptureError(ctx, err, opts...)
-		return
-	}
-	groundcover.CaptureError(ctx, err, opts...)
 }

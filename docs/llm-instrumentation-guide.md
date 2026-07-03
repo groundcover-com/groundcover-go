@@ -195,8 +195,11 @@ Gin:
 import gcgin "github.com/groundcover-com/groundcover-go/contrib/gin"
 
 r := gin.New()
-r.Use(gcgin.Middleware()) // recovers panics, captures c.Errors, seeds a scope
+r.Use(gcgin.New(gcgin.Options{})) // recovers panics, captures c.Errors, seeds a scope
 ```
+
+To capture panics only (skip errors collected via `c.Error(...)`), set
+`gcgin.Options{IgnoreContextErrors: true}`.
 
 The middleware seeds a fresh, isolated scope into each request's context, so
 handler code can call `SetUser`/`WithScope` on `r.Context()` and the captured
@@ -205,7 +208,7 @@ across requests.
 
 ### Middleware composition (order matters)
 
-- **Gin:** register a recovery middleware **before** `gcgin.Middleware()`, or use
+- **Gin:** register a recovery middleware **before** `gcgin.New(...)`, or use
   `gin.Default()` (which includes `gin.Recovery()`). Our middleware re-raises the
   panic after capturing; if nothing downstream recovers it, Gin aborts the
   connection instead of returning 500.
@@ -213,11 +216,11 @@ across requests.
   ```go
   r := gin.New()
   r.Use(gin.Recovery())      // must be registered before ours
-  r.Use(gcgin.Middleware())
+  r.Use(gcgin.New(gcgin.Options{}))
   ```
 
 - **Don't double-wrap:** wrapping a Gin engine in `nethttp.Middleware` *and* using
-  `gcgin.Middleware()` captures the same panic twice unless a terminating
+  `gcgin.New(...)` captures the same panic twice unless a terminating
   `gin.Recovery()` sits between the layers. Pick one middleware per server.
 
 ## 6. Non-error notices
