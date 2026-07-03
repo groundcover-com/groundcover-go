@@ -50,11 +50,13 @@ func run() error {
 	fmt.Printf("roundtrip: gc.test_id=%s dsn=%s api=%s\n", testID, env.dsn, env.apiURL)
 
 	if err := gc.Init(gc.Config{
-		DSN:           env.dsn,
-		IngestionKey:  env.ingestionKey,
-		ServiceName:   "groundcover-go-roundtrip",
-		Env:           "examples",
-		Release:       gc.Version(),
+		DSN:          env.dsn,
+		IngestionKey: env.ingestionKey,
+		ServiceName:  "groundcover-go-roundtrip", // pragma: allowlist secret
+		Env:          "examples",
+		// Release is the application's version (releaseId / service.version);
+		// the SDK version travels separately in telemetry.sdk.version.
+		Release:       "1.0.0",
 		FlushInterval: time.Second,
 	}); err != nil {
 		return fmt.Errorf("init: %w", err)

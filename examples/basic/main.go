@@ -23,7 +23,10 @@ func main() {
 		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
 		ServiceName:  "examples-basic",
 		Env:          "examples",
-		Release:      gc.Version(),
+		// Release identifies the application's own version (releaseId /
+		// service.version), not the SDK version; the SDK version travels
+		// separately in telemetry.sdk.version.
+		Release: envOr("GC_RELEASE", "1.0.0"),
 	}); err != nil {
 		fatalf("init: %v", err)
 	}

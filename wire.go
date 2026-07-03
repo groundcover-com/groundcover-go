@@ -6,9 +6,6 @@ import "encoding/json"
 // value (number/bool) in the buffer's byte budget.
 const scalarSizeEstimate = 16
 
-// userAgent is the SDK identifier sent on the wire.
-func userAgent() string { return sdkName + "/" + Version() }
-
 type wireFrame struct {
 	Filename string `json:"filename"`
 	Function string `json:"function"`
@@ -52,7 +49,7 @@ func (r resource) sessionAttributes() map[string]any {
 		"cluster":            r.cluster,
 		"releaseId":          r.release,
 		"session_start_time": r.startTime.UnixNano(),
-		"userAgent":          userAgent(),
+		"userAgent":          r.userAgent,
 	}
 }
 

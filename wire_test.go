@@ -2,6 +2,7 @@ package groundcover
 
 import (
 	"encoding/json"
+	"runtime/debug"
 	"testing"
 	"time"
 )
@@ -13,6 +14,7 @@ func testResource() resource {
 		namespace:   "shop",
 		cluster:     "c1",
 		release:     "1.0.0",
+		userAgent:   sdkName + "/1.0.0",
 		startTime:   time.Unix(0, 0),
 		attrs: map[string]string{
 			"telemetry.sdk.name": sdkName,
@@ -148,12 +150,17 @@ func TestVersionNonEmpty(t *testing.T) {
 	}
 }
 
-func TestModulePathMatchesRootPackage(t *testing.T) {
-	// version.go lives in the module root package, so modulePath must return
-	// the module path exactly.
-	const want = "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
-	if got := modulePath(); got != want {
-		t.Errorf("modulePath() = %q, want %q", got, want)
+func TestModulePathMatchesMainModule(t *testing.T) {
+	// version.go lives in the module root package, so modulePath must equal
+	// the module path exactly. Compare against the test binary's main module
+	// from build info rather than a hardcoded string so the test keeps
+	// working after a module rename or fork.
+	bi, ok := debug.ReadBuildInfo()
+	if !ok || bi.Main.Path == "" {
+		t.Skip("no build info available")
+	}
+	if got := modulePath(); got != bi.Main.Path {
+		t.Errorf("modulePath() = %q, want main module path %q", got, bi.Main.Path)
 	}
 }
 

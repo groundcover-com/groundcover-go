@@ -27,6 +27,9 @@ type resource struct {
 
 	// attrs are the OTel resource attributes carried with each event.
 	attrs map[string]string
+	// userAgent is the SDK wire identifier, resolved once at init so batch
+	// encoding does not re-read build metadata.
+	userAgent string
 	// mainModule is the main module path used to classify in-app frames.
 	mainModule string
 	// startTime is the SDK initialization time, reported as session_start_time.
@@ -63,10 +66,11 @@ func detectResource(cfg Config) resource {
 		mainModule = bi.Main.Path
 	}
 
+	sdkVersion := Version()
 	attrs := map[string]string{
 		"telemetry.sdk.name":         sdkName,
 		"telemetry.sdk.language":     sdkLanguage,
-		"telemetry.sdk.version":      Version(),
+		"telemetry.sdk.version":      sdkVersion,
 		"process.runtime.name":       "go",
 		"process.runtime.version":    runtime.Version(),
 		"os.type":                    runtime.GOOS,
@@ -96,6 +100,7 @@ func detectResource(cfg Config) resource {
 		namespace:   namespace,
 		cluster:     cluster,
 		attrs:       attrs,
+		userAgent:   sdkName + "/" + sdkVersion,
 		mainModule:  mainModule,
 		startTime:   time.Now(),
 	}
