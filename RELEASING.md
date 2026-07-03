@@ -1,7 +1,7 @@
 # Releasing
 
 The repository is a Go **multi-module** workspace: the core module at the root
-plus nested modules that depend on it (`contrib/gin`, `prometheus`, `examples`).
+plus nested modules that depend on it (`contrib/*`, `prometheus`, `examples`).
 Each nested module `require`s the **published** core version and keeps a local
 `replace` so day-to-day development and CI build against the in-tree core:
 
@@ -38,15 +38,18 @@ version of the core.
    go mod edit -require=github.com/groundcover-com/groundcover-go@v0.1.0
    go mod tidy
    ```
-   Repeat for `prometheus/` and `examples/`. To publish a `replace`-free tag for
+   Repeat for every other `contrib/*` module, `prometheus/`, and `examples/`.
+   To publish a `replace`-free tag for
    cleanliness, add `go mod edit -dropreplace=github.com/groundcover-com/groundcover-go`
    before tidying — optional, since the `replace` has no effect on consumers.
 
-3. **Tag the nested modules** with their module-path-prefixed tags:
+3. **Tag the nested modules** with their module-path-prefixed tags (one per
+   `contrib/*` module plus `prometheus`):
    ```bash
    git tag contrib/gin/v0.1.0
+   git tag contrib/echo/v0.1.0   # ... and the other contrib modules
    git tag prometheus/v0.1.0
-   git push origin contrib/gin/v0.1.0 prometheus/v0.1.0
+   git push origin --tags
    ```
 
 4. **Verify go-gettability from a clean checkout** (outside this repo):
@@ -61,7 +64,7 @@ version of the core.
 - [ ] Every nested module `require`s a real, published core tag (never `v0.0.0`).
 - [ ] `replace` directives onto the core are intentionally dev-only (ignored by consumers).
 - [ ] `make ci` and `make modules` are green.
-- [ ] The live `examples/roundtrip` E2E passes against staging.
+- [ ] The live `examples/roundtrip` and `examples/framework-roundtrip` E2Es pass against staging.
 - [ ] `CHANGELOG`/release notes updated; compatibility table in `README.md` current.
 
 > The `examples/` module is illustrative and is not required to be published, but

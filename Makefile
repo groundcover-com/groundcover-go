@@ -71,6 +71,10 @@ modules: ## Build and test the nested modules (contrib, prometheus, examples).
 roundtrip: ## Run the live end-to-end round-trip example (requires GC_* env vars).
 	cd examples/roundtrip && $(GO) run .
 
+.PHONY: roundtrip-frameworks
+roundtrip-frameworks: ## Run the live per-framework end-to-end verifier (requires GC_* env vars).
+	cd examples/framework-roundtrip && $(GO) run .
+
 .PHONY: help
 help: ## Show this help.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

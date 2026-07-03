@@ -19,6 +19,7 @@ never enter the core library's `go.sum`.
 | [`negroni`](negroni) | Negroni middleware (panic recovery + per-request scope) | `go run ./negroni` |
 | [`grpc`](grpc) | gRPC server interceptors (panic recovery + RPC error capture) | `go run ./grpc` |
 | [`roundtrip`](roundtrip) | **end-to-end**: submit an error, then query the events API and print what came back (also the CI verifier) | `go run ./roundtrip` |
+| [`framework-roundtrip`](framework-roundtrip) | **end-to-end, per framework**: drive one failing request through every integration (net/http, Gin, Echo, Fiber, fasthttp, Iris, Negroni, gRPC), then verify each event via the events API (also the CI verifier) | `go run ./framework-roundtrip` |
 
 Most examples run against a placeholder DSN and never block, so they work without
 credentials. To send real data, set the standard environment variables:
@@ -32,6 +33,7 @@ export GC_API_URL=https://api.groundcover.com
 export GC_BACKEND_ID=<backend-id>             # only if multi-backend
 
 go run ./roundtrip
+go run ./framework-roundtrip
 ```
 
 ## Testing instrumented code
