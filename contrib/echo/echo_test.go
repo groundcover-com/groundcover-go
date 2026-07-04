@@ -182,8 +182,8 @@ func TestEchoPanicStatusAttribute(t *testing.T) {
 	if got := events[0].Attributes["http.response.status_code"]; got != http.StatusInternalServerError {
 		t.Fatalf("re-raise path status = %v, want 500", got)
 	}
-	if got := events[1].Attributes["http.response.status_code"]; got == http.StatusInternalServerError {
-		t.Fatalf("swallow path must not report an inferred 500, got %v", got)
+	if got := events[1].Attributes["http.response.status_code"]; got != http.StatusOK {
+		t.Fatalf("swallow path status = %v, want 200 (finalized in-flight status)", got)
 	}
 }
 
