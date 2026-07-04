@@ -135,8 +135,8 @@ module**, so the core `go.sum` stays dependency-free.
 ## Runtime support
 
 The library supports the **two most recent Go majors** (today **1.25** and **1.26**),
-matching dd-trace-go / otel-go / sentry-go. The `go.mod` floor is the older of
-the two.
+matching the major Go observability SDKs (dd-trace-go, otel-go). The `go.mod`
+floor is the older of the two.
 
 | Library version | Supported Go |
 | --------------- | ------------ |

@@ -10,12 +10,12 @@ import (
 // client when Init is called more than once.
 const globalRecloseTimeout = 5 * time.Second
 
-// global holds the package-level default client used by the top-level functions
-// (Sentry style). It is the single intentional package-level mutable global in
+// global holds the package-level default client used by the top-level
+// functions. It is the single intentional package-level mutable global in
 // the SDK; all other state is per-Client. It starts as a no-op client so the
 // package functions are safe to call before Init.
 //
-//nolint:gochecknoglobals // intentional package-level default client (Sentry-style)
+//nolint:gochecknoglobals // intentional package-level default client
 var global atomic.Pointer[Client]
 
 // disabledClient is a shared no-op client used until Init succeeds.

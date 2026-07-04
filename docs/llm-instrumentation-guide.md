@@ -204,7 +204,7 @@ r := gin.New()
 r.Use(gcgin.New(gcgin.Options{})) // recovers panics (and re-raises), seeds a scope
 ```
 
-By default only panics are captured, mirroring Sentry's Gin integration. To
+By default only panics are captured. To
 also capture errors collected via `c.Error(...)` (`c.Errors`) as handled
 errors, set `gcgin.Options{CaptureContextErrors: true}`. To swallow the panic
 after capture instead of re-raising it, set
@@ -356,7 +356,7 @@ gzipped JSON body.
 
 ## PII surface (know what leaves the process)
 
-The SDK does not block PII by default (matching Sentry). What it does:
+The SDK does not block PII by default. What it does:
 
 - **`Hasher`** pseudonymizes **only `user.id` and `user.email`**. It does **not**
   touch `user.name`, `user.organization`, custom attributes, or error messages.

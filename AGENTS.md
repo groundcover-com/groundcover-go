@@ -22,7 +22,7 @@ This repository contains the groundcover Go runtime SDK. The following rules are
 - Core library is **stdlib only**. Heavy/optional dependencies live in nested
   modules (`prometheus/`, `contrib/...`) and never enter the core `go.sum`.
 - No `init()` functions and no package-level mutable globals, except the single
-  documented package-level default client (Sentry style) in `client_global.go`.
+  documented package-level default client in `client_global.go`.
 - All exported symbols are documented.
 - `gofmt`, `go vet`, `golangci-lint` and `go test -race` must pass: run `make ci`.
 - No `replace` / `exclude` in the core `go.mod`.

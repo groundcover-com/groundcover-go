@@ -14,8 +14,8 @@
 //
 // # Usage
 //
-// The package exposes a Sentry-style global client configured with Init, plus an
-// explicit Client (via New) for tests and multi-config setups.
+// The package exposes a package-level default client configured with Init, plus
+// an explicit Client (via New) for tests and multi-config setups.
 //
 //	if err := groundcover.Init(groundcover.Config{
 //		DSN:          "https://<ingestion-origin>",
