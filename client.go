@@ -86,7 +86,7 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 		sender = transport.NewHTTPSender(transport.HTTPConfig{
 			Endpoint:     resolved.endpoint(),
 			IngestionKey: resolved.IngestionKey,
-			UserAgent:    userAgent(),
+			UserAgent:    c.res.userAgent,
 			Client:       client,
 		})
 	}

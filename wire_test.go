@@ -2,6 +2,7 @@ package groundcover
 
 import (
 	"encoding/json"
+	"runtime/debug"
 	"testing"
 	"time"
 )
@@ -13,6 +14,7 @@ func testResource() resource {
 		namespace:   "shop",
 		cluster:     "c1",
 		release:     "1.0.0",
+		userAgent:   sdkName + "/1.0.0",
 		startTime:   time.Unix(0, 0),
 		attrs: map[string]string{
 			"telemetry.sdk.name": sdkName,
@@ -139,5 +141,42 @@ func TestEstimateValueSize(t *testing.T) {
 	}
 	if estimateValueSize([]any{"a", "bb"}) < 2+len("a")+len("bb") {
 		t.Fatal("slice size should sum element sizes")
+	}
+}
+
+func TestVersionNonEmpty(t *testing.T) {
+	if Version() == "" {
+		t.Fatal("Version() must not be empty")
+	}
+}
+
+func TestModulePathMatchesMainModule(t *testing.T) {
+	// version.go lives in the module root package, so modulePath must equal
+	// the module path exactly. Compare against the test binary's main module
+	// from build info rather than a hardcoded string so the test keeps
+	// working after a module rename or fork.
+	bi, ok := debug.ReadBuildInfo()
+	if !ok || bi.Main.Path == "" {
+		t.Skip("no build info available")
+	}
+	if got := modulePath(); got != bi.Main.Path {
+		t.Errorf("modulePath() = %q, want main module path %q", got, bi.Main.Path)
+	}
+}
+
+func TestNormalizeModuleVersion(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"v0.1.1", "0.1.1"},
+		{"0.1.1", "0.1.1"},
+		{"(devel)", ""},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		if got := normalizeModuleVersion(tc.in); got != tc.want {
+			t.Errorf("normalizeModuleVersion(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
