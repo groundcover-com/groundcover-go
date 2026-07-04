@@ -1,7 +1,8 @@
-// Command gin shows the Gin middleware: it recovers panics, captures errors
-// added to the Gin context, and seeds a fresh scope per request. The example
-// wires the middleware into an engine, fires a request at a route that records
-// an error, and prints the resulting capture count.
+// Command gin shows the Gin middleware: it recovers panics, optionally
+// captures errors added to the Gin context (CaptureContextErrors), and seeds a
+// fresh scope per request. The example wires the middleware into an engine,
+// fires a request at a route that records an error, and prints the resulting
+// capture count.
 //
 //	GC_DSN=https://<ingestion-origin> GC_INGESTION_KEY=<key> go run .
 package main
@@ -34,7 +35,7 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gcgin.Middleware())
+	r.Use(gcgin.New(gcgin.Options{CaptureContextErrors: true}))
 	r.GET("/checkout", func(c *gin.Context) {
 		_ = c.Error(errors.New("checkout failed: out of stock"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "checkout failed"})

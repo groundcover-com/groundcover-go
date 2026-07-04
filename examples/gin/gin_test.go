@@ -15,7 +15,8 @@ import (
 // These tests show how to system-test a Gin service that uses groundcover without
 // a live backend. The seam is a BeforeSend callback that snapshots every event
 // in-process and drops delivery, so assertions are synchronous and hermetic. Each
-// test creates its own recorder and client (no shared global state).
+// test installs a fresh package-level client (the middleware always reports to
+// the global client configured with gc.Init).
 
 type recorder struct {
 	mu     sync.Mutex
@@ -37,33 +38,33 @@ func (r *recorder) all() []gc.Event {
 	return out
 }
 
-// newRecorderClient builds an isolated client whose every capture is recorded.
-func newRecorderClient(t *testing.T) (*recorder, *gc.Client) {
+// initRecorderClient installs a package-level client whose every capture is
+// recorded. Tests within a package run sequentially, so swapping the global
+// client per test is safe.
+func initRecorderClient(t *testing.T) *recorder {
 	t.Helper()
 	rec := &recorder{}
-	client, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:         "http://127.0.0.1:0", // unused: before() drops delivery
 		ServiceName: "examples-gin-test",
 		BeforeSend:  rec.before,
 		Hasher:      gc.NewHMACHasher([]byte("test-key")),
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.CloseTimeout(0) })
-	return rec, client
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
+	return rec
 }
 
 // newTestRouter wires gin.Recovery() before the groundcover middleware so a panic
-// is captured, re-raised, and turned into a 500. Captures are routed to the given
-// client via WithClient. Identity/scope is set INSIDE the handler: the middleware
-// re-reads c.Request.Context() at capture time, so handler enrichment is reflected
-// in the captured error.
-func newTestRouter(client *gc.Client) *gin.Engine {
+// is captured, re-raised, and turned into a 500. Identity/scope is set INSIDE the
+// handler: the middleware re-reads c.Request.Context() at capture time, so handler
+// enrichment is reflected in the captured error.
+func newTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(gcgin.Middleware(gcgin.WithClient(client), gcgin.WithErrorCapture(true)))
+	r.Use(gcgin.New(gcgin.Options{CaptureContextErrors: true}))
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
@@ -90,8 +91,8 @@ func do(engine http.Handler, path string) *httptest.ResponseRecorder {
 
 // Passing path: a healthy request returns 200 and captures nothing.
 func TestHealthz_Passing(t *testing.T) {
-	rec, client := newRecorderClient(t)
-	if w := do(newTestRouter(client), "/healthz"); w.Code != http.StatusOK {
+	rec := initRecorderClient(t)
+	if w := do(newTestRouter(), "/healthz"); w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
 	if n := len(rec.all()); n != 0 {
@@ -102,8 +103,8 @@ func TestHealthz_Passing(t *testing.T) {
 // Failing path: c.Error → 500, exactly one HANDLED error, carrying the identity and
 // session set in the handler (verifies the middleware reflects handler-set scope).
 func TestCheckout_Failing_CapturesHandledErrorWithScope(t *testing.T) {
-	rec, client := newRecorderClient(t)
-	w := do(newTestRouter(client), "/checkout?sid=sess-1")
+	rec := initRecorderClient(t)
+	w := do(newTestRouter(), "/checkout?sid=sess-1")
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("want 500, got %d", w.Code)
@@ -127,8 +128,8 @@ func TestCheckout_Failing_CapturesHandledErrorWithScope(t *testing.T) {
 // Panic path: handler panics; the middleware captures ONE unhandled error,
 // re-raises, gin.Recovery returns 500 — the panic never escapes the test.
 func TestPanic_CapturedReRaisedRecovered(t *testing.T) {
-	rec, client := newRecorderClient(t)
-	w := do(newTestRouter(client), "/panic")
+	rec := initRecorderClient(t)
+	w := do(newTestRouter(), "/panic")
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("want 500 from gin.Recovery, got %d", w.Code)
