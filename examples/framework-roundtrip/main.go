@@ -57,9 +57,15 @@ type scenario struct {
 	// handled is the expected error_handled flag: true for captured handler
 	// errors, false for recovered panics.
 	handled bool
-	// extraKey/extraWant assert one framework-specific attribute round-tripped.
+	// extraKey/extraWant assert one framework-specific string attribute
+	// round-tripped.
 	extraKey  string
 	extraWant string
+	// floatKey/floatWant assert one numeric attribute (status code)
+	// round-tripped as a number, not a string. Empty floatKey skips the check
+	// (net/http and Negroni attach no status code).
+	floatKey  string
+	floatWant float64
 	trigger   func(testID string) error
 }
 
@@ -143,6 +149,11 @@ func verifyEvent(raw []byte, s scenario, testID string) error {
 			return fmt.Errorf("string_attributes[%q] = %q, want %q", k, got, want)
 		}
 	}
+	if s.floatKey != "" {
+		if got := e.FloatAttributes[s.floatKey]; got != s.floatWant {
+			return fmt.Errorf("float_attributes[%q] = %v, want %v", s.floatKey, got, s.floatWant)
+		}
+	}
 	return nil
 }
 
@@ -161,15 +172,16 @@ func markScope(ctx context.Context, framework, testID string) {
 
 func allScenarios() []scenario {
 	httpMethod := "error_metadata.http.request.method"
+	httpStatus := "error_metadata.http.response.status_code"
 	return []scenario{
 		{framework: "nethttp", handled: false, extraKey: httpMethod, extraWant: http.MethodGet, trigger: triggerNetHTTP},
-		{framework: "gin", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, trigger: triggerGin},
-		{framework: "echo", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, trigger: triggerEcho},
-		{framework: "fiber", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, trigger: triggerFiber},
-		{framework: "fasthttp", handled: false, extraKey: httpMethod, extraWant: http.MethodGet, trigger: triggerFastHTTP},
-		{framework: "iris", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, trigger: triggerIris},
+		{framework: "gin", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, floatKey: httpStatus, floatWant: http.StatusInternalServerError, trigger: triggerGin},
+		{framework: "echo", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, floatKey: httpStatus, floatWant: http.StatusInternalServerError, trigger: triggerEcho},
+		{framework: "fiber", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, floatKey: httpStatus, floatWant: http.StatusInternalServerError, trigger: triggerFiber},
+		{framework: "fasthttp", handled: false, extraKey: httpMethod, extraWant: http.MethodGet, floatKey: httpStatus, floatWant: http.StatusInternalServerError, trigger: triggerFastHTTP},
+		{framework: "iris", handled: true, extraKey: httpMethod, extraWant: http.MethodGet, floatKey: httpStatus, floatWant: http.StatusInternalServerError, trigger: triggerIris},
 		{framework: "negroni", handled: false, extraKey: httpMethod, extraWant: http.MethodGet, trigger: triggerNegroni},
-		{framework: "grpc", handled: true, extraKey: "error_metadata.rpc.system", extraWant: "grpc", trigger: triggerGRPC},
+		{framework: "grpc", handled: true, extraKey: "error_metadata.rpc.system", extraWant: "grpc", floatKey: "error_metadata.rpc.grpc.status_code", floatWant: 13, trigger: triggerGRPC},
 	}
 }
 
