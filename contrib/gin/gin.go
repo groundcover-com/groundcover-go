@@ -54,7 +54,7 @@ func New(opts Options) gin.HandlerFunc {
 		defer func() {
 			if rec := recover(); rec != nil {
 				if !isAbortPanic(rec) && !isBrokenPipePanic(rec) {
-					gc.CaptureRecovered(c.Request.Context(), rec, panicAttributes(c))
+					gc.CaptureRecovered(c.Request.Context(), rec, panicAttributes(c, !opts.DisableRepanic))
 				}
 				if !opts.DisableRepanic {
 					panic(rec) // re-raise to Gin's recovery / the server
@@ -117,13 +117,14 @@ func requestAttributes(c *gin.Context) gc.Option {
 	})
 }
 
-// panicAttributes is requestAttributes for the panic path: the response has
-// not been finalized yet, so unless the handler already wrote a response the
-// captured status is the 500 the recovery layer will produce, not Gin's
-// in-flight default (200).
-func panicAttributes(c *gin.Context) gc.Option {
+// panicAttributes is requestAttributes for the panic path. When the panic is
+// re-raised (willRepanic) and the handler wrote nothing, the status the client
+// receives is the 500 the recovery layer produces, not Gin's in-flight default
+// (200), so that is what is reported. On the swallow path (DisableRepanic) the
+// response really is finalized as-is, so the in-flight status is kept.
+func panicAttributes(c *gin.Context, willRepanic bool) gc.Option {
 	status := c.Writer.Status()
-	if !c.Writer.Written() {
+	if willRepanic && !c.Writer.Written() {
 		status = http.StatusInternalServerError
 	}
 	return gc.WithAttributes(gc.Attributes{

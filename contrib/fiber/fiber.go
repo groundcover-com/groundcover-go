@@ -54,7 +54,7 @@ func New(opts Options) fiber.Handler {
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				gc.CaptureRecovered(c.UserContext(), rec, panicAttributes(c))
+				gc.CaptureRecovered(c.UserContext(), rec, panicAttributes(c, !opts.DisableRepanic))
 				if !opts.DisableRepanic {
 					// Fiber has no built-in recovery: unless recover.New() (or
 					// similar) is installed above us, the re-raised panic kills
@@ -85,13 +85,15 @@ func isServerError(err error) bool {
 	return true
 }
 
-// panicAttributes derives attributes on the panic path. The response has not
-// been finalized yet: unless the handler already set a status or wrote a body,
-// the status the request ends with is the 500 the recovery layer produces (or
-// the process dies), not the in-flight default.
-func panicAttributes(c *fiber.Ctx) gc.Option {
+// panicAttributes derives attributes on the panic path. When the panic is
+// re-raised (willRepanic) and the handler wrote nothing, the status the
+// request ends with is the 500 the recovery layer produces (or the process
+// dies), not the in-flight default, so that is what is reported. On the
+// swallow path (DisableRepanic) the response is finalized as-is, so the
+// in-flight status is kept.
+func panicAttributes(c *fiber.Ctx, willRepanic bool) gc.Option {
 	status := c.Response().StatusCode()
-	if status == fiber.StatusOK && len(c.Response().Body()) == 0 {
+	if willRepanic && status == fiber.StatusOK && len(c.Response().Body()) == 0 {
 		status = fiber.StatusInternalServerError
 	}
 	return gc.WithAttributes(gc.Attributes{

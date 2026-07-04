@@ -55,7 +55,7 @@ func New(opts Options) iris.Handler {
 				if isAbortPanic(rec) {
 					panic(rec) // deliberate quiet abort: re-raise, never capture
 				}
-				gc.CaptureRecovered(ctx.Request().Context(), rec, panicAttributes(ctx))
+				gc.CaptureRecovered(ctx.Request().Context(), rec, panicAttributes(ctx, !opts.DisableRepanic))
 				if !opts.DisableRepanic {
 					panic(rec) // re-raise to Iris's recovery / the server
 				}
@@ -91,13 +91,14 @@ func requestAttributes(ctx iris.Context) gc.Option {
 	return gc.WithAttributes(attributesWithStatus(ctx, ctx.GetStatusCode()))
 }
 
-// panicAttributes derives attributes on the panic path. The response has not
-// been finalized yet: unless the handler already wrote a response, the status
-// the request ends with is the 500 Iris's recover middleware produces, not the
-// in-flight default.
-func panicAttributes(ctx iris.Context) gc.Option {
+// panicAttributes derives attributes on the panic path. When the panic is
+// re-raised (willRepanic) and nothing was written yet, the status the request
+// ends with is the 500 Iris's recover middleware produces, not the in-flight
+// default, so that is what is reported. On the swallow path (DisableRepanic)
+// the response is finalized as-is, so the in-flight status is kept.
+func panicAttributes(ctx iris.Context, willRepanic bool) gc.Option {
 	status := ctx.GetStatusCode()
-	if ctx.ResponseWriter().Written() < 0 { // context.NoWritten: nothing committed yet
+	if willRepanic && ctx.ResponseWriter().Written() < 0 { // context.NoWritten: nothing committed yet
 		status = http.StatusInternalServerError
 	}
 	return gc.WithAttributes(attributesWithStatus(ctx, status))

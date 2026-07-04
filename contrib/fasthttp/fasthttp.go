@@ -52,7 +52,7 @@ func New(handler fasthttp.RequestHandler, opts Options) fasthttp.RequestHandler 
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				gc.CaptureRecovered(ScopeContext(ctx), rec, panicAttributes(ctx))
+				gc.CaptureRecovered(ScopeContext(ctx), rec, panicAttributes(ctx, !opts.DisableRepanic))
 				if !opts.DisableRepanic {
 					// fasthttp has no built-in recovery: unless something above
 					// us recovers, the re-raised panic kills the process and
@@ -79,13 +79,15 @@ func ScopeContext(ctx *fasthttp.RequestCtx) context.Context {
 	return context.Background()
 }
 
-// panicAttributes derives attributes on the panic path. The response has not
-// been finalized yet: unless the handler already set a status or wrote a body,
-// the status the request ends with is the 500 an outer recovery layer produces
-// (or the process dies), not the in-flight default.
-func panicAttributes(ctx *fasthttp.RequestCtx) gc.Option {
+// panicAttributes derives attributes on the panic path. When the panic is
+// re-raised (willRepanic) and the handler wrote nothing, the status the
+// request ends with is the 500 an outer recovery layer produces (or the
+// process dies), not the in-flight default, so that is what is reported. On
+// the swallow path (DisableRepanic) the response is finalized as-is, so the
+// in-flight status is kept.
+func panicAttributes(ctx *fasthttp.RequestCtx, willRepanic bool) gc.Option {
 	status := ctx.Response.StatusCode()
-	if status == fasthttp.StatusOK && len(ctx.Response.Body()) == 0 {
+	if willRepanic && status == fasthttp.StatusOK && len(ctx.Response.Body()) == 0 {
 		status = fasthttp.StatusInternalServerError
 	}
 	return gc.WithAttributes(gc.Attributes{

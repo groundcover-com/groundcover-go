@@ -167,6 +167,48 @@ func TestGinCapturesHandlerSetUser(t *testing.T) {
 	}
 }
 
+// TestGinPanicStatusAttribute verifies http.response.status_code on panic
+// events matches what the client actually receives: 500 when the panic is
+// re-raised into a recovery layer, the finalized in-flight status (200) when
+// DisableRepanic swallows it.
+func TestGinPanicStatusAttribute(t *testing.T) {
+	var events []gc.Event
+	if err := gc.Init(gc.Config{
+		DSN:           "https://example.invalid",
+		FlushInterval: time.Hour,
+		BeforeSend: func(e *gc.Event) *gc.Event {
+			events = append(events, *e)
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
+	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
+
+	// Re-raise path: nothing written, recovery above will produce a 500.
+	r := newEngine(gcgin.Options{})
+	r.GET("/boom", func(*gin.Context) { panic("gin boom") })
+	func() {
+		defer func() { _ = recover() }()
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+	}()
+
+	// Swallow path: the response is finalized as-is (empty 200).
+	r = newEngine(gcgin.Options{DisableRepanic: true})
+	r.GET("/boom", func(*gin.Context) { panic("gin boom") })
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 captured panics, got %d", len(events))
+	}
+	if got := events[0].Attributes["http.response.status_code"]; got != http.StatusInternalServerError {
+		t.Fatalf("re-raise path status = %v, want 500", got)
+	}
+	if got := events[1].Attributes["http.response.status_code"]; got != http.StatusOK {
+		t.Fatalf("swallow path status = %v, want 200", got)
+	}
+}
+
 // TestGinInertWhenSDKDisabled proves the middleware never affects the host
 // when the SDK is disabled (equivalent to never calling Init): requests flow
 // unchanged, panics still re-raise, and nothing is captured.

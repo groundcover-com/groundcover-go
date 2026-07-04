@@ -145,6 +145,48 @@ func TestEchoDisableRepanicSwallowsPanic(t *testing.T) {
 	}
 }
 
+// TestEchoPanicStatusAttribute verifies http.response.status_code on panic
+// events matches what the client actually receives: 500 when the panic is
+// re-raised into a recovery layer, the finalized in-flight status when
+// DisableRepanic swallows it.
+func TestEchoPanicStatusAttribute(t *testing.T) {
+	var events []gc.Event
+	if err := gc.Init(gc.Config{
+		DSN:           "https://example.invalid",
+		FlushInterval: time.Hour,
+		BeforeSend: func(e *gc.Event) *gc.Event {
+			events = append(events, *e)
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
+	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
+
+	// Re-raise path: nothing committed, recovery above will produce a 500.
+	e := newEcho(gcecho.Options{})
+	e.GET("/boom", func(echo.Context) error { panic("echo boom") })
+	func() {
+		defer func() { _ = recover() }()
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+	}()
+
+	// Swallow path: the response is finalized as-is.
+	e = newEcho(gcecho.Options{DisableRepanic: true})
+	e.GET("/boom", func(echo.Context) error { panic("echo boom") })
+	e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 captured panics, got %d", len(events))
+	}
+	if got := events[0].Attributes["http.response.status_code"]; got != http.StatusInternalServerError {
+		t.Fatalf("re-raise path status = %v, want 500", got)
+	}
+	if got := events[1].Attributes["http.response.status_code"]; got == http.StatusInternalServerError {
+		t.Fatalf("swallow path must not report an inferred 500, got %v", got)
+	}
+}
+
 // TestEchoInertWhenSDKDisabled proves the middleware never affects the host
 // when the SDK is disabled (equivalent to never calling Init): requests flow
 // unchanged, handler errors propagate untouched, panics still re-raise, and
