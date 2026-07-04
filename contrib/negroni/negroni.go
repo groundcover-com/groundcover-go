@@ -40,7 +40,6 @@ func New(opts Options) negroni.Handler {
 func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 	r = r.WithContext(gc.WithIsolatedScope(r.Context()))
 
-	//nolint:contextcheck // capture must read the request context at panic time, not entry time
 	defer func() {
 		if rec := recover(); rec != nil {
 			if isAbortPanic(rec) {
