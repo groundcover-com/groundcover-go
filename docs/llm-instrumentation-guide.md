@@ -195,11 +195,16 @@ Gin:
 import gcgin "github.com/groundcover-com/groundcover-go/contrib/gin"
 
 r := gin.New()
-r.Use(gcgin.New(gcgin.Options{})) // recovers panics, captures c.Errors, seeds a scope
+r.Use(gcgin.New(gcgin.Options{})) // recovers panics (and re-raises), seeds a scope
 ```
 
-To capture panics only (skip errors collected via `c.Error(...)`), set
-`gcgin.Options{IgnoreContextErrors: true}`.
+By default only panics are captured, mirroring Sentry's Gin integration. To
+also capture errors collected via `c.Error(...)` (`c.Errors`) as handled
+errors, set `gcgin.Options{CaptureContextErrors: true}`. To swallow the panic
+after capture instead of re-raising it, set
+`gcgin.Options{DisableRepanic: true}` — only do this when no recovery
+middleware is expected to turn the panic into a 500 (with nothing written
+before the panic, Gin then finalizes the response as an empty 200).
 
 The middleware seeds a fresh, isolated scope into each request's context, so
 handler code can call `SetUser`/`WithScope` on `r.Context()` and the captured
@@ -210,8 +215,8 @@ across requests.
 
 - **Gin:** register a recovery middleware **before** `gcgin.New(...)`, or use
   `gin.Default()` (which includes `gin.Recovery()`). Our middleware re-raises the
-  panic after capturing; if nothing downstream recovers it, Gin aborts the
-  connection instead of returning 500.
+  panic after capturing (unless `DisableRepanic` is set); if nothing downstream
+  recovers it, Gin aborts the connection instead of returning 500.
 
   ```go
   r := gin.New()

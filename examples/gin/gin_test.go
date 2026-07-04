@@ -64,7 +64,7 @@ func newTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(gcgin.New(gcgin.Options{}))
+	r.Use(gcgin.New(gcgin.Options{CaptureContextErrors: true}))
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 

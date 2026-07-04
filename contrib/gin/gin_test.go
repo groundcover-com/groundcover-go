@@ -54,9 +54,9 @@ func TestGinCapturesPanicAndReRaises(t *testing.T) {
 	}
 }
 
-func TestGinCapturesContextErrors(t *testing.T) {
+func TestGinCapturesContextErrorsWhenEnabled(t *testing.T) {
 	initDropClient(t)
-	r := newEngine(gcgin.Options{})
+	r := newEngine(gcgin.Options{CaptureContextErrors: true})
 	r.GET("/err", func(c *gin.Context) {
 		_ = c.Error(errors.New("handler error"))
 		c.Status(http.StatusInternalServerError)
@@ -69,9 +69,9 @@ func TestGinCapturesContextErrors(t *testing.T) {
 	}
 }
 
-func TestGinIgnoreContextErrors(t *testing.T) {
+func TestGinContextErrorsNotCapturedByDefault(t *testing.T) {
 	initDropClient(t)
-	r := newEngine(gcgin.Options{IgnoreContextErrors: true})
+	r := newEngine(gcgin.Options{})
 	r.GET("/err", func(c *gin.Context) {
 		_ = c.Error(errors.New("handler error"))
 		c.Status(http.StatusInternalServerError)
@@ -80,7 +80,20 @@ func TestGinIgnoreContextErrors(t *testing.T) {
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/err", nil))
 
 	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
-		t.Fatalf("context errors must not be captured when ignored, got %d", got)
+		t.Fatalf("context errors must not be captured by default, got %d", got)
+	}
+}
+
+func TestGinDisableRepanicSwallowsPanic(t *testing.T) {
+	initDropClient(t)
+	r := newEngine(gcgin.Options{DisableRepanic: true})
+	r.GET("/boom", func(*gin.Context) { panic("gin boom") })
+
+	// Must not panic: the middleware swallows it after capturing.
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured panic, got %d", got)
 	}
 }
 
@@ -98,7 +111,7 @@ func TestGinCapturesHandlerSetUser(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 
-	r := newEngine(gcgin.Options{})
+	r := newEngine(gcgin.Options{CaptureContextErrors: true})
 	r.GET("/err", func(c *gin.Context) {
 		// Handler sets the user on the request context, then records an error.
 		gc.SetUser(c.Request.Context(), gc.User{ID: "gin-user"})
