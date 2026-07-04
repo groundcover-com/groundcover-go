@@ -5,7 +5,9 @@
 //
 // Register Fiber's own recover middleware before this one so re-raised panics
 // are turned into 500 responses instead of crashing the process (Fiber, unlike
-// net/http, does not recover handler panics by itself):
+// net/http, does not recover handler panics by itself). If no recovery is
+// installed, the middleware still performs a bounded, best-effort flush before
+// re-raising so the panic event survives the crash:
 //
 //	app.Use(recover.New()) // github.com/gofiber/fiber/v2/middleware/recover
 //	app.Use(gcfiber.Middleware())
@@ -14,6 +16,7 @@ package fiber
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -57,6 +60,11 @@ func Middleware(opts ...Option) fiber.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				captureRecovered(c.UserContext(), cfg.client, rec, requestAttributes(c))
+				// Fiber has no built-in recovery: unless recover.New() (or
+				// similar) is installed above us, the re-raised panic kills the
+				// process and the async queue with it. Flush (bounded,
+				// best-effort) so the event survives the crash.
+				flushBestEffort(cfg.client)
 				panic(rec)
 			}
 		}()
@@ -134,4 +142,18 @@ func captureError(ctx context.Context, client *gc.Client, err error, opts ...gc.
 		return
 	}
 	gc.CaptureError(ctx, err, opts...)
+}
+
+// panicFlushTimeout bounds the best-effort flush performed before re-raising a
+// panic that may take the process down (mirrors the core SDK's Recover).
+const panicFlushTimeout = 2 * time.Second
+
+func flushBestEffort(client *gc.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), panicFlushTimeout)
+	defer cancel()
+	if client != nil {
+		_ = client.Flush(ctx)
+		return
+	}
+	_ = gc.Flush(ctx)
 }

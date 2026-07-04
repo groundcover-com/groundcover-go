@@ -241,11 +241,21 @@ across requests.
   above them if the process must survive handler panics. fasthttp handlers reach
   the request scope via `gcfasthttp.ScopeContext(ctx)`.
 
-- **Client errors are not captured:** the Echo, Fiber, Iris, and gRPC
+- **Client errors are not captured:** the Gin, Echo, Fiber, Iris, and gRPC
   integrations skip client-side outcomes (HTTP status < 500; gRPC codes such as
   `NotFound`, `InvalidArgument`, `Unauthenticated`). Router 404s and validation
   failures never become error events. Plain (non-HTTP-status) errors returned
   from handlers are always captured.
+
+- **Deliberate aborts are not captured:** panics with `http.ErrAbortHandler`
+  (the stdlib's quiet-abort sentinel, raised by `httputil.ReverseProxy` on
+  every client disconnect) are re-raised without capture by the net/http, Gin,
+  Echo, Iris, and Negroni integrations. Gin also skips broken-pipe /
+  connection-reset panics, mirroring `gin.Recovery()`.
+
+- **Crash-safe delivery:** the Fiber, fasthttp, and gRPC integrations perform a
+  bounded, best-effort flush before re-raising a panic, because without an
+  upstream recovery layer the process (and the SDK's async queue) dies with it.
 
 - **Don't double-wrap:** wrapping a Gin engine in `nethttp.Middleware` *and* using
   `gcgin.New(...)` captures the same panic twice unless a terminating

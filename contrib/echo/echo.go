@@ -42,9 +42,10 @@ func WithErrorCapture(enabled bool) Option {
 }
 
 // Middleware returns Echo middleware. Panics are captured as unhandled errors and
-// re-raised (so Echo's own recovery, if installed, still runs); returned handler
-// errors are captured as handled errors unless they are client-side HTTP errors
-// (see WithErrorCapture).
+// re-raised (so Echo's own recovery, if installed, still runs); panics with
+// http.ErrAbortHandler are re-raised without capture. Returned handler errors
+// are captured as handled errors unless they are client-side HTTP errors (see
+// WithErrorCapture).
 func Middleware(opts ...Option) echo.MiddlewareFunc {
 	cfg := config{captureError: true}
 	for _, o := range opts {
@@ -58,7 +59,9 @@ func Middleware(opts ...Option) echo.MiddlewareFunc {
 
 			defer func() {
 				if rec := recover(); rec != nil {
-					captureRecovered(c.Request().Context(), cfg.client, rec, requestAttributes(c))
+					if !isAbortPanic(rec) {
+						captureRecovered(c.Request().Context(), cfg.client, rec, requestAttributes(c))
+					}
 					panic(rec) // re-raise to Echo's recovery / the server
 				}
 			}()
@@ -70,6 +73,13 @@ func Middleware(opts ...Option) echo.MiddlewareFunc {
 			return err
 		}
 	}
+}
+
+// isAbortPanic reports whether the recovered value is net/http's deliberate
+// abort sentinel (http.ErrAbortHandler): a request outcome, not a fault.
+func isAbortPanic(rec any) bool {
+	err, ok := rec.(error)
+	return ok && errors.Is(err, http.ErrAbortHandler)
 }
 
 // isServerError reports whether err represents an application fault worth

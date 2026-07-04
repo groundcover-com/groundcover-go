@@ -4,8 +4,10 @@
 //
 // fasthttp has no built-in panic recovery: the middleware re-raises captured
 // panics, which terminates the process unless the handler chain recovers them.
-// Wrap the middleware with your own recovery handler if the process must
-// survive handler panics.
+// Because the crash would also take the SDK's async queue down, the middleware
+// performs a bounded, best-effort flush before re-raising so the panic event
+// survives. Wrap the middleware with your own recovery handler if the process
+// must survive handler panics.
 //
 // Handlers reach the request scope through ScopeContext:
 //
@@ -20,6 +22,7 @@ package fasthttp
 
 import (
 	"context"
+	"time"
 
 	"github.com/valyala/fasthttp"
 
@@ -56,6 +59,11 @@ func Middleware(handler fasthttp.RequestHandler, opts ...Option) fasthttp.Reques
 		defer func() {
 			if rec := recover(); rec != nil {
 				captureRecovered(ScopeContext(ctx), cfg.client, rec, requestAttributes(ctx))
+				// fasthttp has no built-in recovery: unless something above us
+				// recovers, the re-raised panic kills the process and the async
+				// queue with it. Flush (bounded, best-effort) so the event
+				// survives the crash.
+				flushBestEffort(cfg.client)
 				panic(rec)
 			}
 		}()
@@ -96,4 +104,18 @@ func captureRecovered(ctx context.Context, client *gc.Client, rec any, opts ...g
 		return
 	}
 	gc.CaptureRecovered(ctx, rec, opts...)
+}
+
+// panicFlushTimeout bounds the best-effort flush performed before re-raising a
+// panic that may take the process down (mirrors the core SDK's Recover).
+const panicFlushTimeout = 2 * time.Second
+
+func flushBestEffort(client *gc.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), panicFlushTimeout)
+	defer cancel()
+	if client != nil {
+		_ = client.Flush(ctx)
+		return
+	}
+	_ = gc.Flush(ctx)
 }

@@ -5,6 +5,12 @@
 package gin
 
 import (
+	"errors"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 
 	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
@@ -17,7 +23,10 @@ import (
 type Options struct {
 	// CaptureContextErrors turns ON capturing errors collected on the Gin
 	// context via c.Error(...) (c.Errors) as handled errors. Off by default:
-	// only panics are captured unless this is set.
+	// only panics are captured unless this is set. Errors on requests that
+	// ended with a 4xx response (binding failures, validation errors, and
+	// other client errors) are never captured: they are request outcomes,
+	// not application faults.
 	CaptureContextErrors bool
 
 	// DisableRepanic turns OFF re-raising the panic after capture, so the
@@ -31,7 +40,9 @@ type Options struct {
 
 // New returns Gin middleware that reports to the package-level default client
 // configured with the core SDK's Init. Panics are captured as unhandled errors
-// and re-raised (unless Options.DisableRepanic is set); errors collected on
+// and re-raised (unless Options.DisableRepanic is set); panics with
+// http.ErrAbortHandler and broken-pipe/connection-reset panics (which Gin's
+// own recovery also special-cases) are never captured. Errors collected on
 // the Gin context are captured as handled errors when
 // Options.CaptureContextErrors is set.
 func New(opts Options) gin.HandlerFunc {
@@ -43,7 +54,9 @@ func New(opts Options) gin.HandlerFunc {
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				gc.CaptureRecovered(c.Request.Context(), rec, requestAttributes(c))
+				if !isAbortPanic(rec) && !isBrokenPipePanic(rec) {
+					gc.CaptureRecovered(c.Request.Context(), rec, requestAttributes(c))
+				}
 				if !opts.DisableRepanic {
 					panic(rec) // re-raise to Gin's recovery / the server
 				}
@@ -52,12 +65,50 @@ func New(opts Options) gin.HandlerFunc {
 
 		c.Next()
 
-		if opts.CaptureContextErrors {
+		if opts.CaptureContextErrors && isServerError(c) {
 			for _, e := range c.Errors {
 				gc.CaptureError(c.Request.Context(), e.Err, requestAttributes(c))
 			}
 		}
 	}
+}
+
+// isServerError reports whether the collected errors represent application
+// faults worth capturing. Requests that ended with a 4xx response are normal
+// request outcomes (bad input, auth failures) and are skipped. Gin's response
+// is already written when the middleware resumes, so the written status is
+// authoritative.
+func isServerError(c *gin.Context) bool {
+	status := c.Writer.Status()
+	return status < http.StatusBadRequest || status >= http.StatusInternalServerError
+}
+
+// isAbortPanic reports whether the recovered value is net/http's deliberate
+// abort sentinel (http.ErrAbortHandler): a request outcome, not a fault.
+func isAbortPanic(rec any) bool {
+	err, ok := rec.(error)
+	return ok && errors.Is(err, http.ErrAbortHandler)
+}
+
+// isBrokenPipePanic reports whether the recovered value is a broken-pipe or
+// connection-reset network error: the client went away mid-response. Gin's own
+// recovery special-cases these (it aborts without writing a 500); they are
+// connection conditions, not application faults, and are not captured.
+func isBrokenPipePanic(rec any) bool {
+	err, ok := rec.(error)
+	if !ok {
+		return false
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		return false
+	}
+	var sysErr *os.SyscallError
+	if !errors.As(opErr.Err, &sysErr) {
+		return false
+	}
+	msg := strings.ToLower(sysErr.Error())
+	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer")
 }
 
 func requestAttributes(c *gin.Context) gc.Option {

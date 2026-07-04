@@ -96,6 +96,19 @@ func TestIrisErrorCaptureDisabled(t *testing.T) {
 	}
 }
 
+func TestIrisSkipsAbortHandlerPanic(t *testing.T) {
+	client := newDropClient(t)
+	app := newApp(client)
+	app.Get("/abort", func(iris.Context) { panic(http.ErrAbortHandler) })
+
+	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
+	e.GET("/abort").Expect().Status(http.StatusInternalServerError)
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no capture for http.ErrAbortHandler, got %d", got)
+	}
+}
+
 func TestIrisHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	app := newApp(client)

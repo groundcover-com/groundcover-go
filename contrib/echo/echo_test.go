@@ -112,6 +112,25 @@ func TestEchoErrorCaptureDisabled(t *testing.T) {
 	}
 }
 
+func TestEchoSkipsAbortHandlerPanic(t *testing.T) {
+	client := newDropClient(t)
+	e := newEcho(client)
+	e.GET("/abort", func(echo.Context) error { panic(http.ErrAbortHandler) })
+
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatal("abort panic must still be re-raised")
+			}
+		}()
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/abort", nil))
+	}()
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no capture for http.ErrAbortHandler, got %d", got)
+	}
+}
+
 func TestEchoHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	e := newEcho(client)

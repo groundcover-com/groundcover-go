@@ -47,6 +47,26 @@ func TestNegroniCapturesPanicAndReRaises(t *testing.T) {
 	}
 }
 
+func TestNegroniSkipsAbortHandlerPanic(t *testing.T) {
+	client := newDropClient(t)
+	n := negroni.New()
+	n.Use(gcnegroni.Middleware(gcnegroni.WithClient(client)))
+	n.UseHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }))
+
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatal("abort panic must still be re-raised")
+			}
+		}()
+		n.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/abort", nil))
+	}()
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no capture for http.ErrAbortHandler, got %d", got)
+	}
+}
+
 func TestNegroniHappyPath(t *testing.T) {
 	client := newDropClient(t)
 	n := negroni.New()

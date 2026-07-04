@@ -5,8 +5,10 @@
 //
 // gRPC servers have no built-in panic recovery: the interceptors re-raise
 // captured panics, which terminates the process unless something above them
-// recovers. If the process must survive handler panics, install a recovery
-// interceptor ahead of these in the chain:
+// recovers. Because the crash would also take the SDK's async queue down, the
+// interceptors perform a bounded, best-effort flush before re-raising so the
+// panic event survives. If the process must survive handler panics, install a
+// recovery interceptor ahead of these in the chain:
 //
 //	grpc.ChainUnaryInterceptor(recoveryInterceptor, gcgrpc.UnaryServerInterceptor())
 package grpc
@@ -14,6 +16,7 @@ package grpc
 import (
 	"context"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -57,6 +60,11 @@ func UnaryServerInterceptor(opts ...Option) grpc.UnaryServerInterceptor {
 		defer func() {
 			if rec := recover(); rec != nil {
 				captureRecovered(ctx, cfg.client, rec, panicAttributes(info.FullMethod))
+				// gRPC servers have no built-in recovery: unless an outer
+				// interceptor recovers, the re-raised panic kills the process
+				// and the async queue with it. Flush (bounded, best-effort) so
+				// the event survives the crash.
+				flushBestEffort(cfg.client) //nolint:contextcheck // deliberate detached flush before re-raise
 				panic(rec)
 			}
 		}()
@@ -81,6 +89,9 @@ func StreamServerInterceptor(opts ...Option) grpc.StreamServerInterceptor {
 		defer func() {
 			if rec := recover(); rec != nil {
 				captureRecovered(ctx, cfg.client, rec, panicAttributes(info.FullMethod))
+				// See UnaryServerInterceptor: flush so the event survives a
+				// process-killing re-raise.
+				flushBestEffort(cfg.client) //nolint:contextcheck // deliberate detached flush before re-raise
 				panic(rec)
 			}
 		}()
@@ -189,4 +200,18 @@ func captureError(ctx context.Context, client *gc.Client, err error, opts ...gc.
 		return
 	}
 	gc.CaptureError(ctx, err, opts...)
+}
+
+// panicFlushTimeout bounds the best-effort flush performed before re-raising a
+// panic that may take the process down (mirrors the core SDK's Recover).
+const panicFlushTimeout = 2 * time.Second
+
+func flushBestEffort(client *gc.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), panicFlushTimeout)
+	defer cancel()
+	if client != nil {
+		_ = client.Flush(ctx)
+		return
+	}
+	_ = gc.Flush(ctx)
 }

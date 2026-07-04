@@ -12,6 +12,7 @@ package iris
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/kataras/iris/v12"
@@ -42,9 +43,10 @@ func WithErrorCapture(enabled bool) Option {
 }
 
 // Middleware returns Iris middleware. Panics are captured as unhandled errors and
-// re-raised (so Iris's own recovery, if installed, still runs); context errors
-// are captured as handled errors unless recorded with a client-error status
-// (see WithErrorCapture).
+// re-raised (so Iris's own recovery, if installed, still runs); panics with
+// http.ErrAbortHandler are re-raised without capture. Context errors are
+// captured as handled errors unless recorded with a client-error status (see
+// WithErrorCapture).
 func Middleware(opts ...Option) iris.Handler {
 	cfg := config{captureError: true}
 	for _, o := range opts {
@@ -59,7 +61,9 @@ func Middleware(opts ...Option) iris.Handler {
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(ctx.Request().Context(), cfg.client, rec, requestAttributes(ctx))
+				if !isAbortPanic(rec) {
+					captureRecovered(ctx.Request().Context(), cfg.client, rec, requestAttributes(ctx))
+				}
 				panic(rec)
 			}
 		}()
@@ -72,6 +76,13 @@ func Middleware(opts ...Option) iris.Handler {
 			}
 		}
 	}
+}
+
+// isAbortPanic reports whether the recovered value is net/http's deliberate
+// abort sentinel (http.ErrAbortHandler): a request outcome, not a fault.
+func isAbortPanic(rec any) bool {
+	err, ok := rec.(error)
+	return ok && errors.Is(err, http.ErrAbortHandler)
 }
 
 // isServerError reports whether the recorded error represents an application

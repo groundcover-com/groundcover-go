@@ -5,6 +5,7 @@ package negroni
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/urfave/negroni/v3"
@@ -29,7 +30,8 @@ type middleware struct {
 }
 
 // Middleware returns Negroni middleware. Panics are captured as unhandled errors
-// and re-raised (so Negroni's own recovery, if installed, still runs).
+// and re-raised (so Negroni's own recovery, if installed, still runs); panics
+// with http.ErrAbortHandler are re-raised without capture.
 func Middleware(opts ...Option) negroni.Handler {
 	var cfg config
 	for _, o := range opts {
@@ -45,12 +47,21 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http
 	//nolint:contextcheck // capture must read the request context at panic time, not entry time
 	defer func() {
 		if rec := recover(); rec != nil {
-			captureRecovered(r.Context(), m.cfg.client, rec, requestAttributes(r))
+			if !isAbortPanic(rec) {
+				captureRecovered(r.Context(), m.cfg.client, rec, requestAttributes(r))
+			}
 			panic(rec)
 		}
 	}()
 
 	next(w, r)
+}
+
+// isAbortPanic reports whether the recovered value is net/http's deliberate
+// abort sentinel (http.ErrAbortHandler): a request outcome, not a fault.
+func isAbortPanic(rec any) bool {
+	err, ok := rec.(error)
+	return ok && errors.Is(err, http.ErrAbortHandler)
 }
 
 func requestAttributes(r *http.Request) gc.Option {

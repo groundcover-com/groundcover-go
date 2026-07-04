@@ -3,8 +3,10 @@ package gin_test
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -81,6 +83,45 @@ func TestGinContextErrorsNotCapturedByDefault(t *testing.T) {
 
 	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
 		t.Fatalf("context errors must not be captured by default, got %d", got)
+	}
+}
+
+func TestGinSkipsClientErrors(t *testing.T) {
+	initDropClient(t)
+	r := newEngine(gcgin.Options{CaptureContextErrors: true})
+	r.GET("/bad", func(c *gin.Context) {
+		_ = c.Error(errors.New("binding failed"))
+		c.Status(http.StatusBadRequest)
+	})
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/bad", nil))
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures for 4xx responses, got %d", got)
+	}
+}
+
+func TestGinSkipsAbortAndBrokenPipePanics(t *testing.T) {
+	initDropClient(t)
+	r := newEngine(gcgin.Options{})
+	r.GET("/abort", func(*gin.Context) { panic(http.ErrAbortHandler) })
+	r.GET("/pipe", func(*gin.Context) {
+		panic(&net.OpError{Op: "write", Err: os.NewSyscallError("write", errors.New("broken pipe"))})
+	})
+
+	for _, path := range []string{"/abort", "/pipe"} {
+		func() {
+			defer func() {
+				if rec := recover(); rec == nil {
+					t.Fatalf("%s: panic must still be re-raised", path)
+				}
+			}()
+			r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil))
+		}()
+	}
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no captures for abort/broken-pipe panics, got %d", got)
 	}
 }
 
