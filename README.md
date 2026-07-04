@@ -67,11 +67,34 @@ func main() {
   key shows up as *no data* rather than an exception. It is optional **only** when
   `DSN` points at a local in-cluster sensor (which needs no auth).
 
+### Web frameworks
+
+Middleware is provided for net/http and every framework in the
+[Optional integrations](#optional-integrations) table below. All follow the
+same shape — a `New` constructor taking an `Options` struct whose zero value
+captures panics only (Sentry-style); capturing handler errors is opt-in:
+
+```go
+import gcgin "github.com/groundcover-com/groundcover-go/contrib/gin"
+
+r := gin.Default() // gin.Recovery() turns re-raised panics into 500s
+r.Use(gcgin.New(gcgin.Options{CaptureContextErrors: true}))
+```
+
+Each middleware seeds an isolated per-request scope (so handler
+`SetUser`/`WithScope` enrichment is reflected in captured errors), re-raises
+panics after capture, and skips client-side outcomes (4xx, router 404s,
+client gRPC codes) so they never become error events. See
+[`examples/`](examples) for a runnable program per framework and
+[`docs/llm-instrumentation-guide.md`](docs/llm-instrumentation-guide.md)
+for wiring details, including middleware ordering.
+
 ### More usage
 
-- **[`examples/`](examples)** — runnable programs: `basic`, `nethttp`, `gin`, and
-  an end-to-end `roundtrip` that submits an error and queries it back. Run e.g.
-  `cd examples && go run ./basic`.
+- **[`examples/`](examples)** — runnable programs: `basic`, `nethttp`, `gin`,
+  `echo`, `fiber`, `fasthttp`, `iris`, `negroni`, `grpc`, and two live
+  end-to-end verifiers (`roundtrip`, `framework-roundtrip`) that submit errors
+  and query them back. Run e.g. `cd examples && go run ./basic`.
 - **[`example_test.go`](example_test.go)** — API-level snippets rendered on pkg.go.dev.
 - **[`docs/llm-instrumentation-guide.md`](docs/llm-instrumentation-guide.md)** — a
   step-by-step guide for AI coding agents (and humans) instrumenting an existing
@@ -127,7 +150,8 @@ pin an older library release if you run an older Go.
 ```bash
 make ci          # build + vet + lint + race tests — the gate for every change
 make modules     # build + test the nested modules (contrib, prometheus, examples)
-make roundtrip   # live end-to-end example against a real backend (requires GC_* env vars)
+make roundtrip             # live end-to-end example against a real backend (requires GC_* env vars)
+make roundtrip-frameworks  # live e2e across all framework integrations (requires GC_* env vars)
 ```
 
 AI agents must never author commits; see [`AGENTS.md`](AGENTS.md).
