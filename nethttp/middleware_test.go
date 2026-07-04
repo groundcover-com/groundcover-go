@@ -63,6 +63,28 @@ func TestMiddlewareCapturesAndReRaises(t *testing.T) {
 	}
 }
 
+func TestMiddlewareSkipsAbortHandlerPanic(t *testing.T) {
+	client := newDropClient(t)
+	h := nethttp.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		// httputil.ReverseProxy panics with this sentinel whenever the client
+		// disconnects mid-response; it must not be reported.
+		panic(http.ErrAbortHandler)
+	}), nethttp.WithClient(client))
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("abort panic must still be re-raised")
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
+	}()
+
+	if got := client.Stats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("expected no capture for http.ErrAbortHandler, got %d", got)
+	}
+}
+
 // recorderClient returns a client whose BeforeSend records the finalized event
 // (then drops it, so there is no network I/O).
 func recorderClient(t *testing.T, rec *groundcover.Event) *groundcover.Client {

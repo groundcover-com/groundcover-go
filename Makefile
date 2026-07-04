@@ -58,7 +58,7 @@ tidy: ## Tidy and vendor the core module dependencies.
 	$(GO) mod tidy
 	@if [ -d vendor ]; then $(GO) mod vendor; fi
 
-NESTED_MODULES := prometheus contrib/gin examples
+NESTED_MODULES := prometheus contrib/gin contrib/echo contrib/fiber contrib/fasthttp contrib/iris contrib/negroni contrib/grpc examples
 
 .PHONY: modules
 modules: ## Build and test the nested modules (contrib, prometheus, examples).
@@ -70,6 +70,10 @@ modules: ## Build and test the nested modules (contrib, prometheus, examples).
 .PHONY: roundtrip
 roundtrip: ## Run the live end-to-end round-trip example (requires GC_* env vars).
 	cd examples/roundtrip && $(GO) run .
+
+.PHONY: roundtrip-frameworks
+roundtrip-frameworks: ## Run the live per-framework end-to-end verifier (requires GC_* env vars).
+	cd examples/framework-roundtrip && $(GO) run .
 
 .PHONY: help
 help: ## Show this help.

@@ -38,3 +38,17 @@ jobs:
             exit 0
           fi
           go run .
+      - name: Run per-framework round-trip
+        working-directory: examples/framework-roundtrip
+        env:
+          GC_DSN: ${{ secrets.GC_DSN }}
+          GC_INGESTION_KEY: ${{ secrets.GC_INGESTION_KEY }}
+          GC_API_KEY: ${{ secrets.GC_API_KEY }}
+          GC_API_URL: ${{ secrets.GC_API_URL }}
+          GC_BACKEND_ID: ${{ secrets.GC_BACKEND_ID }}
+        run: |
+          if [ -z "${GC_DSN}" ] || [ -z "${GC_INGESTION_KEY}" ] || [ -z "${GC_API_KEY}" ] || [ -z "${GC_API_URL}" ]; then
+            echo "E2E secrets are not configured; skipping the live per-framework trainer."
+            exit 0
+          fi
+          go run .

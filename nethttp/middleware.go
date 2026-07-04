@@ -5,6 +5,7 @@ package nethttp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	groundcover "github.com/groundcover-com/groundcover-go"
@@ -26,7 +27,8 @@ func WithClient(c *groundcover.Client) Option {
 
 // Middleware wraps next so that each request gets an isolated scope and any
 // panic is captured (as an unhandled error) and then re-raised, leaving the
-// host's control flow unchanged.
+// host's control flow unchanged. Panics with http.ErrAbortHandler — the
+// stdlib's deliberate quiet-abort sentinel — are re-raised without capture.
 func Middleware(next http.Handler, opts ...Option) http.Handler {
 	var cfg config
 	for _, o := range opts {
@@ -42,13 +44,25 @@ func Middleware(next http.Handler, opts ...Option) http.Handler {
 		//nolint:contextcheck // capture must read the request context at panic time, not entry time
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(r.Context(), cfg.client, rec, requestAttributes(r))
+				if !isAbortPanic(rec) {
+					captureRecovered(r.Context(), cfg.client, rec, requestAttributes(r))
+				}
 				panic(rec) // re-raise: net/http handles handler panics per request
 			}
 		}()
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isAbortPanic reports whether the recovered value is net/http's deliberate
+// abort sentinel. Panicking with http.ErrAbortHandler is the documented way to
+// abort a response quietly (httputil.ReverseProxy does it whenever a client
+// disconnects mid-response), so it is a request outcome, not an application
+// fault, and is not captured.
+func isAbortPanic(rec any) bool {
+	err, ok := rec.(error)
+	return ok && errors.Is(err, http.ErrAbortHandler)
 }
 
 // requestAttributes attaches OTel-style HTTP attributes to the captured event.

@@ -1,0 +1,55 @@
+package main
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+
+	gc "github.com/groundcover-com/groundcover-go"
+	gcfiber "github.com/groundcover-com/groundcover-go/contrib/fiber"
+)
+
+type recorder struct {
+	mu     sync.Mutex
+	events []gc.Event
+}
+
+func (r *recorder) before(e *gc.Event) *gc.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, *e)
+	return nil
+}
+
+func TestCheckout_CapturesHandledError(t *testing.T) {
+	rec := &recorder{}
+	if err := gc.Init(gc.Config{
+		DSN:         "http://127.0.0.1:0",
+		ServiceName: "examples-fiber-test",
+		BeforeSend:  rec.before,
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
+	}
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
+
+	app := fiber.New()
+	app.Use(gcfiber.New(gcfiber.Options{CaptureHandlerErrors: true}))
+	app.Get("/checkout", func(*fiber.Ctx) error { return errors.New("checkout failed") })
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout", nil))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if len(rec.events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(rec.events))
+	}
+	if !rec.events[0].ErrorHandled {
+		t.Fatalf("want handled error")
+	}
+}

@@ -12,7 +12,7 @@ const maxTitleLen = 256
 const messageErrorType = "message"
 
 // titleFor derives a human-readable, single-line display title from an event's
-// type and message. It mirrors Sentry's "{type}: {value}" issue title, with the
+// type and message, rendered as "{type}: {value}", with the
 // message reduced to a single line and the whole title length-capped. Non-error
 // notices (CaptureMessage) use the bare message.
 func titleFor(e *Event) string {

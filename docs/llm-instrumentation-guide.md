@@ -56,7 +56,13 @@ Optional integrations (only if the service uses them) are separate modules:
 | Need | Import |
 | ---- | ------ |
 | net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` |
+| Echo middleware | `github.com/groundcover-com/groundcover-go/contrib/echo` |
+| FastHTTP middleware | `github.com/groundcover-com/groundcover-go/contrib/fasthttp` |
+| Fiber middleware | `github.com/groundcover-com/groundcover-go/contrib/fiber` |
 | Gin middleware | `github.com/groundcover-com/groundcover-go/contrib/gin` |
+| gRPC interceptors | `github.com/groundcover-com/groundcover-go/contrib/grpc` |
+| Iris middleware | `github.com/groundcover-com/groundcover-go/contrib/iris` |
+| Negroni middleware | `github.com/groundcover-com/groundcover-go/contrib/negroni` |
 | Prometheus metrics bridge | `github.com/groundcover-com/groundcover-go/prometheus` |
 
 ## 2. Initialize once, at the top of `main`
@@ -198,13 +204,36 @@ r := gin.New()
 r.Use(gcgin.New(gcgin.Options{})) // recovers panics (and re-raises), seeds a scope
 ```
 
-By default only panics are captured, mirroring Sentry's Gin integration. To
+By default only panics are captured. To
 also capture errors collected via `c.Error(...)` (`c.Errors`) as handled
 errors, set `gcgin.Options{CaptureContextErrors: true}`. To swallow the panic
 after capture instead of re-raising it, set
 `gcgin.Options{DisableRepanic: true}` — only do this when no recovery
 middleware is expected to turn the panic into a 500 (with nothing written
 before the panic, Gin then finalizes the response as an empty 200).
+
+Echo, Fiber, Iris, Negroni, fasthttp, and gRPC follow the same shape — a `New`
+constructor taking an `Options` struct whose zero value captures panics only:
+
+```go
+e.Use(gcecho.New(gcecho.Options{}))                              // Echo
+app.Use(gcfiber.New(gcfiber.Options{}))                          // Fiber
+app.Use(gciris.New(gciris.Options{}))                            // Iris
+n.Use(gcnegroni.New(gcnegroni.Options{}))                        // Negroni
+h := gcfasthttp.New(handler, gcfasthttp.Options{})               // fasthttp
+srv := grpc.NewServer( // gRPC
+	grpc.ChainUnaryInterceptor(gcgrpc.UnaryServerInterceptor(gcgrpc.Options{})),
+	grpc.ChainStreamInterceptor(gcgrpc.StreamServerInterceptor(gcgrpc.Options{})),
+)
+```
+
+Capturing handler errors is opt-in per framework:
+`gcecho.Options{CaptureHandlerErrors: true}` (errors returned from Echo
+handlers), `gcfiber.Options{CaptureHandlerErrors: true}` (errors returned from
+Fiber handlers), `gciris.Options{CaptureContextErrors: true}` (errors recorded
+on the Iris context), and `gcgrpc.Options{CaptureRPCErrors: true}` (server-fault
+RPC status codes). Every integration also has `DisableRepanic` to swallow the
+panic after capture instead of re-raising it.
 
 The middleware seeds a fresh, isolated scope into each request's context, so
 handler code can call `SetUser`/`WithScope` on `r.Context()` and the captured
@@ -223,6 +252,34 @@ across requests.
   r.Use(gin.Recovery())      // must be registered before ours
   r.Use(gcgin.New(gcgin.Options{}))
   ```
+
+- **Echo / Fiber / Iris:** same rule — register the framework's own recover
+  middleware **before** ours (`middleware.Recover()` for Echo, `recover.New()`
+  for Fiber and Iris). Fiber in particular does not recover handler panics by
+  itself, so without its recover middleware a re-raised panic crashes the
+  process.
+
+- **fasthttp / gRPC:** neither has built-in panic recovery. Our
+  middleware/interceptors re-raise after capturing; add your own recovery layer
+  above them if the process must survive handler panics. fasthttp handlers reach
+  the request scope via `gcfasthttp.ScopeContext(ctx)`.
+
+- **Client errors are not captured:** even with error capturing enabled, the
+  Gin, Echo, Fiber, Iris, and gRPC integrations skip client-side outcomes
+  (HTTP status < 500; gRPC codes such as `NotFound`, `InvalidArgument`,
+  `Unauthenticated`). Router 404s and validation failures never become error
+  events. Plain (non-HTTP-status) errors returned from handlers are always
+  captured.
+
+- **Deliberate aborts are not captured:** panics with `http.ErrAbortHandler`
+  (the stdlib's quiet-abort sentinel, raised by `httputil.ReverseProxy` on
+  every client disconnect) are re-raised without capture by the net/http, Gin,
+  Echo, Iris, and Negroni integrations. Gin also skips broken-pipe /
+  connection-reset panics, mirroring `gin.Recovery()`.
+
+- **Crash-safe delivery:** the Fiber, fasthttp, and gRPC integrations perform a
+  bounded, best-effort flush before re-raising a panic, because without an
+  upstream recovery layer the process (and the SDK's async queue) dies with it.
 
 - **Don't double-wrap:** wrapping a Gin engine in `nethttp.Middleware` *and* using
   `gcgin.New(...)` captures the same panic twice unless a terminating
@@ -299,7 +356,7 @@ gzipped JSON body.
 
 ## PII surface (know what leaves the process)
 
-The SDK does not block PII by default (matching Sentry). What it does:
+The SDK does not block PII by default. What it does:
 
 - **`Hasher`** pseudonymizes **only `user.id` and `user.email`**. It does **not**
   touch `user.name`, `user.organization`, custom attributes, or error messages.
@@ -317,7 +374,7 @@ If your errors or attributes may carry PII, write a `BeforeSend` scrubber.
 
 1. Is there a `main`? → add `Init` + deferred `Close` there. If multiple binaries,
    instrument each `main`.
-2. Is it an HTTP server (net/http or gin)? → add the matching middleware; that
+2. Is it an HTTP server (net/http, Echo, Fiber, Gin, Iris, Negroni, or fasthttp)? → add the matching middleware; that
    covers panics and request scope for free.
 3. For each place that currently logs or returns an error that matters
    (handlers, background workers, scheduled jobs), add a single
