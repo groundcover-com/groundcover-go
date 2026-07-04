@@ -4,12 +4,12 @@ go 1.25.0
 
 require (
 	github.com/groundcover-com/groundcover-go v0.1.1
-	github.com/valyala/fasthttp v1.66.0
+	github.com/valyala/fasthttp v1.72.0
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.0 // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/andybalholm/brotli v1.2.2 // indirect
+	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 )
 
