@@ -11,7 +11,7 @@ require (
 	github.com/groundcover-com/groundcover-go/contrib/fiber v0.1.1
 	github.com/groundcover-com/groundcover-go/contrib/gin v0.1.1
 	github.com/groundcover-com/groundcover-go/contrib/grpc v0.1.1
-	github.com/groundcover-com/groundcover-go/contrib/iris v0.1.1
+	github.com/groundcover-com/groundcover-go/contrib/iris v0.0.0-00010101000000-000000000000
 	github.com/groundcover-com/groundcover-go/contrib/negroni v0.1.1
 	github.com/kataras/iris/v12 v12.2.11
 	github.com/labstack/echo/v4 v4.15.4
@@ -57,9 +57,9 @@ require (
 	github.com/iris-contrib/schema v0.0.6 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/kataras/blocks v0.0.12 // indirect
-	github.com/kataras/golog v0.1.15 // indirect
-	github.com/kataras/pio v0.0.14 // indirect
+	github.com/kataras/blocks v0.0.8 // indirect
+	github.com/kataras/golog v0.1.11 // indirect
+	github.com/kataras/pio v0.0.13 // indirect
 	github.com/kataras/sitemap v0.0.6 // indirect
 	github.com/kataras/tunnel v0.0.4 // indirect
 	github.com/klauspost/compress v1.19.0 // indirect
