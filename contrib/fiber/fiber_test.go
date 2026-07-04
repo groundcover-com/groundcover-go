@@ -136,6 +136,45 @@ func TestFiberDisableRepanicSwallowsPanic(t *testing.T) {
 	}
 }
 
+// TestFiberInertWhenSDKDisabled proves the middleware never affects the host
+// when the SDK is disabled (equivalent to never calling Init): requests flow
+// unchanged, handler errors propagate untouched, and nothing is captured.
+func TestFiberInertWhenSDKDisabled(t *testing.T) {
+	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
+		t.Fatalf("init disabled client: %v", err)
+	}
+	app := fiber.New()
+	app.Use(recover.New())
+	app.Use(gcfiber.New(gcfiber.Options{CaptureHandlerErrors: true}))
+	app.Get("/ok", func(c *fiber.Ctx) error { return c.SendString("ok") })
+	app.Get("/err", func(*fiber.Ctx) error { return errors.New("handler error") })
+	app.Get("/boom", func(*fiber.Ctx) error { panic("fiber boom") })
+
+	resp := doRequest(t, app, "/ok")
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "ok" {
+		t.Fatalf("response altered: body=%q", body)
+	}
+
+	resp = doRequest(t, app, "/err")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("handler error must still become a 500, got %d", resp.StatusCode)
+	}
+
+	// Panic still reaches recover.New() above and becomes a 500.
+	resp = doRequest(t, app, "/boom")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("panic must still become a 500 via recover.New(), got %d", resp.StatusCode)
+	}
+
+	if s := gc.GlobalStats(); s.Captured != 0 || s.DroppedBeforeSend != 0 {
+		t.Fatalf("disabled SDK must capture nothing, stats=%+v", s)
+	}
+}
+
 func TestFiberHappyPath(t *testing.T) {
 	initDropClient(t)
 	app := newApp(gcfiber.Options{CaptureHandlerErrors: true})

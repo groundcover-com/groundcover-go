@@ -145,6 +145,45 @@ func TestEchoDisableRepanicSwallowsPanic(t *testing.T) {
 	}
 }
 
+// TestEchoInertWhenSDKDisabled proves the middleware never affects the host
+// when the SDK is disabled (equivalent to never calling Init): requests flow
+// unchanged, handler errors propagate untouched, panics still re-raise, and
+// nothing is captured.
+func TestEchoInertWhenSDKDisabled(t *testing.T) {
+	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
+		t.Fatalf("init disabled client: %v", err)
+	}
+	e := newEcho(gcecho.Options{CaptureHandlerErrors: true})
+	e.GET("/ok", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/err", func(echo.Context) error { return errors.New("handler error") })
+	e.GET("/boom", func(echo.Context) error { panic("echo boom") })
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Fatalf("response altered: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/err", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("handler error must still become a 500, got %d", rec.Code)
+	}
+
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatal("panic must still be re-raised with a disabled SDK")
+			}
+		}()
+		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+	}()
+
+	if s := gc.GlobalStats(); s.Captured != 0 || s.DroppedBeforeSend != 0 {
+		t.Fatalf("disabled SDK must capture nothing, stats=%+v", s)
+	}
+}
+
 func TestEchoHappyPath(t *testing.T) {
 	initDropClient(t)
 	e := newEcho(gcecho.Options{CaptureHandlerErrors: true})

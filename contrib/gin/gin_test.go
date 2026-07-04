@@ -167,6 +167,37 @@ func TestGinCapturesHandlerSetUser(t *testing.T) {
 	}
 }
 
+// TestGinInertWhenSDKDisabled proves the middleware never affects the host
+// when the SDK is disabled (equivalent to never calling Init): requests flow
+// unchanged, panics still re-raise, and nothing is captured.
+func TestGinInertWhenSDKDisabled(t *testing.T) {
+	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
+		t.Fatalf("init disabled client: %v", err)
+	}
+	r := newEngine(gcgin.Options{CaptureContextErrors: true})
+	r.GET("/ok", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	r.GET("/boom", func(*gin.Context) { panic("gin boom") })
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Fatalf("response altered: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatal("panic must still be re-raised with a disabled SDK")
+			}
+		}()
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+	}()
+
+	if s := gc.GlobalStats(); s.Captured != 0 || s.DroppedBeforeSend != 0 {
+		t.Fatalf("disabled SDK must capture nothing, stats=%+v", s)
+	}
+}
+
 func TestGinHappyPath(t *testing.T) {
 	initDropClient(t)
 	r := newEngine(gcgin.Options{})

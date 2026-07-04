@@ -2,6 +2,7 @@ package grpc_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -164,6 +165,43 @@ func TestStreamCapturesPanicAndReRaises(t *testing.T) {
 
 	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
 		t.Fatalf("expected 1 captured panic, got %d", got)
+	}
+}
+
+// TestUnaryInertWhenSDKDisabled proves the interceptor never affects the RPC
+// when the SDK is disabled (equivalent to never calling Init): responses and
+// errors propagate untouched, panics still re-raise, and nothing is captured.
+func TestUnaryInertWhenSDKDisabled(t *testing.T) {
+	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
+		t.Fatalf("init disabled client: %v", err)
+	}
+	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.Options{CaptureRPCErrors: true})
+
+	resp, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"},
+		func(context.Context, any) (any, error) { return "reply", nil })
+	if err != nil || resp != "reply" {
+		t.Fatalf("response altered: resp=%v err=%v", resp, err)
+	}
+
+	wantErr := status.Error(codes.Internal, "rpc failed")
+	_, err = interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"},
+		func(context.Context, any) (any, error) { return nil, wantErr })
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error altered: %v", err)
+	}
+
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatal("panic must still be re-raised with a disabled SDK")
+			}
+		}()
+		_, _ = interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"},
+			func(context.Context, any) (any, error) { panic("grpc boom") })
+	}()
+
+	if s := gc.GlobalStats(); s.Captured != 0 || s.DroppedBeforeSend != 0 {
+		t.Fatalf("disabled SDK must capture nothing, stats=%+v", s)
 	}
 }
 

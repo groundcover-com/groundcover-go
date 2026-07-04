@@ -82,6 +82,39 @@ func TestNegroniDisableRepanicSwallowsPanic(t *testing.T) {
 	}
 }
 
+// TestNegroniInertWhenSDKDisabled proves the middleware never affects the host
+// when the SDK is disabled (equivalent to never calling Init): requests flow
+// unchanged, panics still re-raise, and nothing is captured.
+func TestNegroniInertWhenSDKDisabled(t *testing.T) {
+	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
+		t.Fatalf("init disabled client: %v", err)
+	}
+	n := newApp(gcnegroni.Options{}, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	rec := httptest.NewRecorder()
+	n.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Fatalf("response altered: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	boom := newApp(gcnegroni.Options{}, func(http.ResponseWriter, *http.Request) { panic("negroni boom") })
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatal("panic must still be re-raised with a disabled SDK")
+			}
+		}()
+		boom.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+	}()
+
+	if s := gc.GlobalStats(); s.Captured != 0 || s.DroppedBeforeSend != 0 {
+		t.Fatalf("disabled SDK must capture nothing, stats=%+v", s)
+	}
+}
+
 func TestNegroniHappyPath(t *testing.T) {
 	initDropClient(t)
 	n := newApp(gcnegroni.Options{}, func(w http.ResponseWriter, _ *http.Request) {

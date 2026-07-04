@@ -123,6 +123,27 @@ func TestIrisDisableRepanicSwallowsPanic(t *testing.T) {
 	}
 }
 
+// TestIrisInertWhenSDKDisabled proves the middleware never affects the host
+// when the SDK is disabled (equivalent to never calling Init): requests flow
+// unchanged, panics still reach the recover middleware, and nothing is
+// captured.
+func TestIrisInertWhenSDKDisabled(t *testing.T) {
+	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
+		t.Fatalf("init disabled client: %v", err)
+	}
+	app := newApp(gciris.Options{CaptureContextErrors: true})
+	app.Get("/ok", func(ctx iris.Context) { _, _ = ctx.WriteString("ok") })
+	app.Get("/boom", func(iris.Context) { panic("iris boom") })
+
+	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
+	e.GET("/ok").Expect().Status(http.StatusOK).Body().IsEqual("ok")
+	e.GET("/boom").Expect().Status(http.StatusInternalServerError)
+
+	if s := gc.GlobalStats(); s.Captured != 0 || s.DroppedBeforeSend != 0 {
+		t.Fatalf("disabled SDK must capture nothing, stats=%+v", s)
+	}
+}
+
 func TestIrisHappyPath(t *testing.T) {
 	initDropClient(t)
 	app := newApp(gciris.Options{CaptureContextErrors: true})

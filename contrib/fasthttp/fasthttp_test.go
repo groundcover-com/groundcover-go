@@ -92,6 +92,41 @@ func TestFastHTTPScopeContextWithoutMiddleware(t *testing.T) {
 	}
 }
 
+// TestFastHTTPInertWhenSDKDisabled proves the middleware never affects the
+// host when the SDK is disabled (equivalent to never calling Init): requests
+// flow unchanged, panics still re-raise, and nothing is captured.
+func TestFastHTTPInertWhenSDKDisabled(t *testing.T) {
+	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
+		t.Fatalf("init disabled client: %v", err)
+	}
+	okHandler := gcfasthttp.New(func(ctx *fasthttp.RequestCtx) {
+		ctx.SetStatusCode(fasthttp.StatusOK)
+		ctx.SetBodyString("ok")
+	}, gcfasthttp.Options{})
+
+	ctx := newRequestCtx("GET", "http://example.com/ok")
+	okHandler(ctx)
+	if ctx.Response.StatusCode() != fasthttp.StatusOK || string(ctx.Response.Body()) != "ok" {
+		t.Fatalf("response altered: code=%d body=%q", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+
+	panicHandler := gcfasthttp.New(func(*fasthttp.RequestCtx) {
+		panic("fasthttp boom")
+	}, gcfasthttp.Options{})
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatal("panic must still be re-raised with a disabled SDK")
+			}
+		}()
+		panicHandler(newRequestCtx("GET", "http://example.com/boom"))
+	}()
+
+	if s := gc.GlobalStats(); s.Captured != 0 || s.DroppedBeforeSend != 0 {
+		t.Fatalf("disabled SDK must capture nothing, stats=%+v", s)
+	}
+}
+
 func TestFastHTTPHappyPath(t *testing.T) {
 	initDropClient(t)
 	handler := gcfasthttp.New(func(ctx *fasthttp.RequestCtx) {
