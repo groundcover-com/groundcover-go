@@ -26,9 +26,9 @@ func main() {
 	}
 	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
-	handler := gcfasthttp.Middleware(func(ctx *fasthttp.RequestCtx) {
+	handler := gcfasthttp.New(func(ctx *fasthttp.RequestCtx) {
 		panic("checkout failed: out of stock")
-	})
+	}, gcfasthttp.Options{})
 
 	var ctx fasthttp.RequestCtx
 	ctx.Request.Header.SetMethod("GET")

@@ -1,74 +1,69 @@
-// Package echo provides Echo middleware that recovers panics, captures them (and
-// server-fault errors returned from handlers) through the SDK, and seeds a
-// fresh request scope. It is a separate module so the echo dependency never
-// enters the core SDK's go.sum.
+// Package echo provides Echo middleware that recovers panics, captures them
+// (and optionally errors returned from handlers) through the core SDK, and
+// seeds a fresh request scope. It is a separate module so the echo dependency
+// never enters the core SDK's go.sum.
 //
 // Register Echo's own Recover middleware before this one so re-raised panics
 // are turned into 500 responses instead of aborting the connection:
 //
 //	e.Use(middleware.Recover()) // github.com/labstack/echo/v4/middleware
-//	e.Use(gcecho.Middleware())
+//	e.Use(gcecho.New(gcecho.Options{}))
 package echo
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
 
-	gc "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 )
 
-type config struct {
-	client       *gc.Client
-	captureError bool
+// Options configures the middleware. The zero value is valid and captures
+// panics only, mirroring Sentry's Echo integration: the panic is captured as an
+// unhandled error and re-raised so Echo's own recovery (or the server) handles
+// the response exactly as it would without the middleware.
+type Options struct {
+	// CaptureHandlerErrors turns ON capturing errors returned from handlers as
+	// handled errors. Off by default: only panics are captured unless this is
+	// set. *echo.HTTPError values with a status code below 500 (404s,
+	// validation failures, and other client errors) are never captured: they
+	// are request outcomes, not application faults.
+	CaptureHandlerErrors bool
+
+	// DisableRepanic turns OFF re-raising the panic after capture, so the
+	// middleware swallows it instead (the handler chain then returns no
+	// error). Leave this off when Echo's Recover middleware is installed:
+	// re-raising lets it turn the panic into a 500 as usual. Panics with
+	// http.ErrAbortHandler are always re-raised, never captured.
+	DisableRepanic bool
 }
 
-// Option configures the middleware.
-type Option func(*config)
-
-// WithClient routes captures to an explicit client instead of the global one.
-func WithClient(c *gc.Client) Option {
-	return func(cfg *config) { cfg.client = c }
-}
-
-// WithErrorCapture toggles capturing errors returned from handlers as handled
-// errors. Enabled by default. *echo.HTTPError values with a status code below
-// 500 (404s, validation failures, and other client errors) are never captured:
-// they are request outcomes, not application faults.
-func WithErrorCapture(enabled bool) Option {
-	return func(cfg *config) { cfg.captureError = enabled }
-}
-
-// Middleware returns Echo middleware. Panics are captured as unhandled errors and
-// re-raised (so Echo's own recovery, if installed, still runs); panics with
-// http.ErrAbortHandler are re-raised without capture. Returned handler errors
-// are captured as handled errors unless they are client-side HTTP errors (see
-// WithErrorCapture).
-func Middleware(opts ...Option) echo.MiddlewareFunc {
-	cfg := config{captureError: true}
-	for _, o := range opts {
-		o(&cfg)
-	}
-
+// New returns Echo middleware that reports to the package-level default client
+// configured with the core SDK's Init. Panics are captured as unhandled errors
+// and re-raised (unless Options.DisableRepanic is set); returned handler
+// errors are captured as handled errors when Options.CaptureHandlerErrors is
+// set, excluding client-side HTTP errors.
+func New(opts Options) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			ctx := seedScope(c.Request().Context(), cfg.client)
-			c.SetRequest(c.Request().WithContext(ctx))
+			c.SetRequest(c.Request().WithContext(gc.WithIsolatedScope(c.Request().Context())))
 
 			defer func() {
 				if rec := recover(); rec != nil {
-					if !isAbortPanic(rec) {
-						captureRecovered(c.Request().Context(), cfg.client, rec, requestAttributes(c))
+					if isAbortPanic(rec) {
+						panic(rec) // deliberate quiet abort: re-raise, never capture
 					}
-					panic(rec) // re-raise to Echo's recovery / the server
+					gc.CaptureRecovered(c.Request().Context(), rec, requestAttributes(c))
+					if !opts.DisableRepanic {
+						panic(rec) // re-raise to Echo's recovery / the server
+					}
 				}
 			}()
 
 			err := next(c)
-			if cfg.captureError && err != nil && isServerError(err) {
-				captureError(c.Request().Context(), cfg.client, err, errorAttributes(c, err))
+			if opts.CaptureHandlerErrors && err != nil && isServerError(err) {
+				gc.CaptureError(c.Request().Context(), err, errorAttributes(c, err))
 			}
 			return err
 		}
@@ -117,27 +112,4 @@ func errorAttributes(c echo.Context, err error) gc.Option {
 		"http.route":                c.Path(),
 		"http.response.status_code": status,
 	})
-}
-
-func seedScope(ctx context.Context, client *gc.Client) context.Context {
-	if client != nil {
-		return client.WithIsolatedScope(ctx)
-	}
-	return gc.WithIsolatedScope(ctx)
-}
-
-func captureRecovered(ctx context.Context, client *gc.Client, rec any, opts ...gc.Option) {
-	if client != nil {
-		client.CaptureRecovered(ctx, rec, opts...)
-		return
-	}
-	gc.CaptureRecovered(ctx, rec, opts...)
-}
-
-func captureError(ctx context.Context, client *gc.Client, err error, opts ...gc.Option) {
-	if client != nil {
-		client.CaptureError(ctx, err, opts...)
-		return
-	}
-	gc.CaptureError(ctx, err, opts...)
 }

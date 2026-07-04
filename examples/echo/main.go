@@ -31,7 +31,7 @@ func main() {
 	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
 	e := echo.New()
-	e.Use(gcecho.Middleware())
+	e.Use(gcecho.New(gcecho.Options{CaptureHandlerErrors: true}))
 	e.GET("/checkout", func(c echo.Context) error {
 		return errors.New("checkout failed: out of stock")
 	})

@@ -26,18 +26,17 @@ func (r *recorder) before(e *gc.Event) *gc.Event {
 
 func TestCheckout_CapturesHandledError(t *testing.T) {
 	rec := &recorder{}
-	client, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:         "http://127.0.0.1:0",
 		ServiceName: "examples-echo-test",
 		BeforeSend:  rec.before,
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.CloseTimeout(0) })
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
 
 	e := echo.New()
-	e.Use(gcecho.Middleware(gcecho.WithClient(client)))
+	e.Use(gcecho.New(gcecho.Options{CaptureHandlerErrors: true}))
 	e.GET("/checkout", func(c echo.Context) error {
 		return &checkoutError{}
 	})

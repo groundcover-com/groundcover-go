@@ -29,7 +29,7 @@ func main() {
 	}
 	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
-	interceptor := gcgrpc.UnaryServerInterceptor()
+	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.Options{CaptureRPCErrors: true})
 	handler := grpc.UnaryHandler(func(context.Context, any) (any, error) {
 		return nil, status.Error(codes.Internal, "checkout failed: out of stock")
 	})

@@ -27,18 +27,17 @@ func (r *recorder) before(e *gc.Event) *gc.Event {
 
 func TestCheckout_CapturesHandledError(t *testing.T) {
 	rec := &recorder{}
-	client, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:         "http://127.0.0.1:0",
 		ServiceName: "examples-fiber-test",
 		BeforeSend:  rec.before,
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.CloseTimeout(0) })
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
 
 	app := fiber.New()
-	app.Use(gcfiber.Middleware(gcfiber.WithClient(client)))
+	app.Use(gcfiber.New(gcfiber.Options{CaptureHandlerErrors: true}))
 	app.Get("/checkout", func(*fiber.Ctx) error { return errors.New("checkout failed") })
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout", nil))

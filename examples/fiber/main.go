@@ -31,7 +31,7 @@ func main() {
 	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
 	app := fiber.New()
-	app.Use(gcfiber.Middleware())
+	app.Use(gcfiber.New(gcfiber.Options{CaptureHandlerErrors: true}))
 	app.Get("/checkout", func(c *fiber.Ctx) error {
 		return errors.New("checkout failed: out of stock")
 	})

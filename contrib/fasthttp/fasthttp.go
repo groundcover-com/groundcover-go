@@ -1,13 +1,12 @@
 // Package fasthttp provides fasthttp middleware that recovers panics, captures
-// them through groundcover, and seeds a fresh request scope. It is a separate
+// them through the core SDK, and seeds a fresh request scope. It is a separate
 // module so the fasthttp dependency never enters the core SDK's go.sum.
 //
 // fasthttp has no built-in panic recovery: the middleware re-raises captured
-// panics, which terminates the process unless the handler chain recovers them.
-// Because the crash would also take the SDK's async queue down, the middleware
-// performs a bounded, best-effort flush before re-raising so the panic event
-// survives. Wrap the middleware with your own recovery handler if the process
-// must survive handler panics.
+// panics (unless Options.DisableRepanic is set), which terminates the process
+// unless the handler chain recovers them. Because the crash would also take
+// the SDK's async queue down, the middleware performs a bounded, best-effort
+// flush before re-raising so the panic event survives.
 //
 // Handlers reach the request scope through ScopeContext:
 //
@@ -26,45 +25,42 @@ import (
 
 	"github.com/valyala/fasthttp"
 
-	gc "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 )
 
-type config struct {
-	client *gc.Client
-}
-
-// Option configures the middleware.
-type Option func(*config)
-
-// WithClient routes captures to an explicit client instead of the global one.
-func WithClient(c *gc.Client) Option {
-	return func(cfg *config) { cfg.client = c }
+// Options configures the middleware. The zero value is valid and captures
+// panics, re-raising them after capture.
+type Options struct {
+	// DisableRepanic turns OFF re-raising the panic after capture, so the
+	// middleware swallows it instead and fasthttp finalizes the response as-is
+	// (an empty 200 when nothing was written). Leave this off when an outer
+	// recovery handler is installed, or when the process should crash on
+	// panics as it would without the middleware.
+	DisableRepanic bool
 }
 
 type scopeKey struct{}
 
-// Middleware wraps a fasthttp.RequestHandler. Panics are captured as unhandled
-// errors and re-raised. Each request gets an isolated scope, reachable from
-// handlers via ScopeContext.
-func Middleware(handler fasthttp.RequestHandler, opts ...Option) fasthttp.RequestHandler {
-	var cfg config
-	for _, o := range opts {
-		o(&cfg)
-	}
-
+// New wraps a fasthttp.RequestHandler with middleware that reports to the
+// package-level default client configured with the core SDK's Init. Panics are
+// captured as unhandled errors and re-raised (unless Options.DisableRepanic is
+// set). Each request gets an isolated scope, reachable from handlers via
+// ScopeContext.
+func New(handler fasthttp.RequestHandler, opts Options) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
-		seeded := seedScope(context.Background(), cfg.client)
-		ctx.SetUserValue(scopeKey{}, seeded)
+		ctx.SetUserValue(scopeKey{}, gc.WithIsolatedScope(context.Background()))
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				captureRecovered(ScopeContext(ctx), cfg.client, rec, requestAttributes(ctx))
-				// fasthttp has no built-in recovery: unless something above us
-				// recovers, the re-raised panic kills the process and the async
-				// queue with it. Flush (bounded, best-effort) so the event
-				// survives the crash.
-				flushBestEffort(cfg.client)
-				panic(rec)
+				gc.CaptureRecovered(ScopeContext(ctx), rec, requestAttributes(ctx))
+				if !opts.DisableRepanic {
+					// fasthttp has no built-in recovery: unless something above
+					// us recovers, the re-raised panic kills the process and
+					// the async queue with it. Flush (bounded, best-effort) so
+					// the event survives the crash.
+					flushBestEffort()
+					panic(rec)
+				}
 			}
 		}()
 
@@ -72,10 +68,10 @@ func Middleware(handler fasthttp.RequestHandler, opts ...Option) fasthttp.Reques
 	}
 }
 
-// ScopeContext returns the isolated request context seeded by Middleware.
-// Handlers use it to enrich the scope (SetUser, WithScope) or capture errors
-// with request scope. It returns context.Background() when the middleware did
-// not run for this request.
+// ScopeContext returns the isolated request context seeded by New. Handlers
+// use it to enrich the scope (SetUser, WithScope) or capture errors with
+// request scope. It returns context.Background() when the middleware did not
+// run for this request.
 func ScopeContext(ctx *fasthttp.RequestCtx) context.Context {
 	if c, ok := ctx.UserValue(scopeKey{}).(context.Context); ok {
 		return c
@@ -91,31 +87,12 @@ func requestAttributes(ctx *fasthttp.RequestCtx) gc.Option {
 	})
 }
 
-func seedScope(ctx context.Context, client *gc.Client) context.Context {
-	if client != nil {
-		return client.WithIsolatedScope(ctx)
-	}
-	return gc.WithIsolatedScope(ctx)
-}
-
-func captureRecovered(ctx context.Context, client *gc.Client, rec any, opts ...gc.Option) {
-	if client != nil {
-		client.CaptureRecovered(ctx, rec, opts...)
-		return
-	}
-	gc.CaptureRecovered(ctx, rec, opts...)
-}
-
 // panicFlushTimeout bounds the best-effort flush performed before re-raising a
 // panic that may take the process down (mirrors the core SDK's Recover).
 const panicFlushTimeout = 2 * time.Second
 
-func flushBestEffort(client *gc.Client) {
+func flushBestEffort() {
 	ctx, cancel := context.WithTimeout(context.Background(), panicFlushTimeout)
 	defer cancel()
-	if client != nil {
-		_ = client.Flush(ctx)
-		return
-	}
 	_ = gc.Flush(ctx)
 }

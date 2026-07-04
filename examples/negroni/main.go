@@ -30,7 +30,7 @@ func main() {
 	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
 
 	n := negroni.New()
-	n.Use(gcnegroni.Middleware())
+	n.Use(gcnegroni.New(gcnegroni.Options{}))
 	n.UseHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("checkout failed: out of stock")
 	}))

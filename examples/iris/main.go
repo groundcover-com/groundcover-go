@@ -33,7 +33,7 @@ func main() {
 
 	app := iris.New()
 	app.Use(recover.New())
-	app.Use(gciris.Middleware())
+	app.Use(gciris.New(gciris.Options{CaptureContextErrors: true}))
 	app.Get("/checkout", func(ctx iris.Context) {
 		ctx.StopWithError(http.StatusInternalServerError, errors.New("checkout failed: out of stock"))
 	})

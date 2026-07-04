@@ -24,19 +24,18 @@ func (r *recorder) before(e *gc.Event) *gc.Event {
 
 func TestCheckout_CapturesUnhandledPanic(t *testing.T) {
 	rec := &recorder{}
-	client, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:         "http://127.0.0.1:0",
 		ServiceName: "examples-fasthttp-test",
 		BeforeSend:  rec.before,
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.CloseTimeout(0) })
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
 
-	handler := gcfasthttp.Middleware(func(*fasthttp.RequestCtx) {
+	handler := gcfasthttp.New(func(*fasthttp.RequestCtx) {
 		panic("checkout failed")
-	}, gcfasthttp.WithClient(client))
+	}, gcfasthttp.Options{})
 
 	var ctx fasthttp.RequestCtx
 	ctx.Request.Header.SetMethod("GET")

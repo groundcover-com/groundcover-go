@@ -9,29 +9,34 @@ import (
 
 	"github.com/urfave/negroni/v3"
 
-	gc "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 	gcnegroni "github.com/groundcover-com/groundcover-go/contrib/negroni"
 )
 
-func newDropClient(t *testing.T) *gc.Client {
+// initDropClient installs a package-level client that drops every event in
+// BeforeSend, so tests observe captures via GlobalStats without any delivery.
+func initDropClient(t *testing.T) {
 	t.Helper()
-	c, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:           "https://example.invalid",
 		FlushInterval: time.Hour,
 		BeforeSend:    func(*gc.Event) *gc.Event { return nil },
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close(context.Background()) })
-	return c
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
+}
+
+func newApp(opts gcnegroni.Options, handler http.HandlerFunc) *negroni.Negroni {
+	n := negroni.New()
+	n.Use(gcnegroni.New(opts))
+	n.UseHandler(handler)
+	return n
 }
 
 func TestNegroniCapturesPanicAndReRaises(t *testing.T) {
-	client := newDropClient(t)
-	n := negroni.New()
-	n.Use(gcnegroni.Middleware(gcnegroni.WithClient(client)))
-	n.UseHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("negroni boom") }))
+	initDropClient(t)
+	n := newApp(gcnegroni.Options{}, func(http.ResponseWriter, *http.Request) { panic("negroni boom") })
 
 	func() {
 		defer func() {
@@ -42,16 +47,14 @@ func TestNegroniCapturesPanicAndReRaises(t *testing.T) {
 		n.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
 	}()
 
-	if got := client.Stats().DroppedBeforeSend; got != 1 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
 		t.Fatalf("expected 1 captured panic, got %d", got)
 	}
 }
 
 func TestNegroniSkipsAbortHandlerPanic(t *testing.T) {
-	client := newDropClient(t)
-	n := negroni.New()
-	n.Use(gcnegroni.Middleware(gcnegroni.WithClient(client)))
-	n.UseHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }))
+	initDropClient(t)
+	n := newApp(gcnegroni.Options{}, func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) })
 
 	func() {
 		defer func() {
@@ -62,25 +65,35 @@ func TestNegroniSkipsAbortHandlerPanic(t *testing.T) {
 		n.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/abort", nil))
 	}()
 
-	if got := client.Stats().DroppedBeforeSend; got != 0 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
 		t.Fatalf("expected no capture for http.ErrAbortHandler, got %d", got)
 	}
 }
 
+func TestNegroniDisableRepanicSwallowsPanic(t *testing.T) {
+	initDropClient(t)
+	n := newApp(gcnegroni.Options{DisableRepanic: true}, func(http.ResponseWriter, *http.Request) { panic("negroni boom") })
+
+	// Must not panic: the middleware swallows it after capturing.
+	n.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/boom", nil))
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured panic, got %d", got)
+	}
+}
+
 func TestNegroniHappyPath(t *testing.T) {
-	client := newDropClient(t)
-	n := negroni.New()
-	n.Use(gcnegroni.Middleware(gcnegroni.WithClient(client)))
-	n.UseHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	initDropClient(t)
+	n := newApp(gcnegroni.Options{}, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	})
 
 	rec := httptest.NewRecorder()
 	n.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ok", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if client.Stats().Captured != 0 || client.Stats().DroppedBeforeSend != 0 {
-		t.Fatalf("no capture expected on happy path, stats=%+v", client.Stats())
+	if gc.GlobalStats().Captured != 0 || gc.GlobalStats().DroppedBeforeSend != 0 {
+		t.Fatalf("no capture expected on happy path, stats=%+v", gc.GlobalStats())
 	}
 }

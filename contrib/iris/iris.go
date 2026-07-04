@@ -1,78 +1,72 @@
-// Package iris provides Iris middleware that recovers panics, captures them (and
-// server-fault errors recorded on the Iris context) through the SDK, and
-// seeds a fresh request scope. It is a separate module so the iris dependency
-// never enters the core SDK's go.sum.
+// Package iris provides Iris middleware that recovers panics, captures them
+// (and optionally errors recorded on the Iris context) through the core SDK,
+// and seeds a fresh request scope. It is a separate module so the iris
+// dependency never enters the core SDK's go.sum.
 //
 // Register Iris's own recover middleware before this one so re-raised panics
 // are turned into 500 responses instead of aborting the connection:
 //
 //	app.Use(recover.New()) // github.com/kataras/iris/v12/middleware/recover
-//	app.Use(gciris.Middleware())
+//	app.Use(gciris.New(gciris.Options{}))
 package iris
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
 	"github.com/kataras/iris/v12"
 
-	gc "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 )
 
-type config struct {
-	client       *gc.Client
-	captureError bool
+// Options configures the middleware. The zero value is valid and captures
+// panics only, mirroring Sentry's Iris integration: the panic is captured as an
+// unhandled error and re-raised so Iris's own recovery (or the server) handles
+// the response exactly as it would without the middleware.
+type Options struct {
+	// CaptureContextErrors turns ON capturing errors recorded on the Iris
+	// context (via StopWithError and similar) as handled errors. Off by
+	// default: only panics are captured unless this is set. Errors recorded
+	// with a 4xx status code (validation failures, not-found, and other client
+	// errors) are never captured: they are request outcomes, not application
+	// faults.
+	CaptureContextErrors bool
+
+	// DisableRepanic turns OFF re-raising the panic after capture, so the
+	// middleware swallows it instead. Leave this off when Iris's recover
+	// middleware is installed: re-raising lets it turn the panic into a 500 as
+	// usual. Panics with http.ErrAbortHandler are always re-raised, never
+	// captured.
+	DisableRepanic bool
 }
 
-// Option configures the middleware.
-type Option func(*config)
-
-// WithClient routes captures to an explicit client instead of the global one.
-func WithClient(c *gc.Client) Option {
-	return func(cfg *config) { cfg.client = c }
-}
-
-// WithErrorCapture toggles capturing errors recorded on the Iris context (via
-// StopWithError and similar) as handled errors. Enabled by default. Errors
-// recorded with a 4xx status code (validation failures, not-found, and other
-// client errors) are never captured: they are request outcomes, not
-// application faults.
-func WithErrorCapture(enabled bool) Option {
-	return func(cfg *config) { cfg.captureError = enabled }
-}
-
-// Middleware returns Iris middleware. Panics are captured as unhandled errors and
-// re-raised (so Iris's own recovery, if installed, still runs); panics with
-// http.ErrAbortHandler are re-raised without capture. Context errors are
-// captured as handled errors unless recorded with a client-error status (see
-// WithErrorCapture).
-func Middleware(opts ...Option) iris.Handler {
-	cfg := config{captureError: true}
-	for _, o := range opts {
-		o(&cfg)
-	}
-
+// New returns Iris middleware that reports to the package-level default client
+// configured with the core SDK's Init. Panics are captured as unhandled errors
+// and re-raised (unless Options.DisableRepanic is set); context errors are
+// captured as handled errors when Options.CaptureContextErrors is set,
+// excluding errors recorded with a client-error status.
+func New(opts Options) iris.Handler {
 	return func(ctx iris.Context) {
 		req := ctx.Request()
-		seeded := seedScope(req.Context(), cfg.client)
-		req = req.WithContext(seeded)
-		ctx.ResetRequest(req)
+		ctx.ResetRequest(req.WithContext(gc.WithIsolatedScope(req.Context())))
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				if !isAbortPanic(rec) {
-					captureRecovered(ctx.Request().Context(), cfg.client, rec, requestAttributes(ctx))
+				if isAbortPanic(rec) {
+					panic(rec) // deliberate quiet abort: re-raise, never capture
 				}
-				panic(rec)
+				gc.CaptureRecovered(ctx.Request().Context(), rec, requestAttributes(ctx))
+				if !opts.DisableRepanic {
+					panic(rec) // re-raise to Iris's recovery / the server
+				}
 			}
 		}()
 
 		ctx.Next()
 
-		if cfg.captureError {
+		if opts.CaptureContextErrors {
 			if err := ctx.GetErr(); err != nil && isServerError(ctx) {
-				captureError(ctx.Request().Context(), cfg.client, err, requestAttributes(ctx))
+				gc.CaptureError(ctx.Request().Context(), err, requestAttributes(ctx))
 			}
 		}
 	}
@@ -104,27 +98,4 @@ func requestAttributes(ctx iris.Context) gc.Option {
 		"http.route":                route,
 		"http.response.status_code": ctx.GetStatusCode(),
 	})
-}
-
-func seedScope(ctx context.Context, client *gc.Client) context.Context {
-	if client != nil {
-		return client.WithIsolatedScope(ctx)
-	}
-	return gc.WithIsolatedScope(ctx)
-}
-
-func captureRecovered(ctx context.Context, client *gc.Client, rec any, opts ...gc.Option) {
-	if client != nil {
-		client.CaptureRecovered(ctx, rec, opts...)
-		return
-	}
-	gc.CaptureRecovered(ctx, rec, opts...)
-}
-
-func captureError(ctx context.Context, client *gc.Client, err error, opts ...gc.Option) {
-	if client != nil {
-		client.CaptureError(ctx, err, opts...)
-		return
-	}
-	gc.CaptureError(ctx, err, opts...)
 }

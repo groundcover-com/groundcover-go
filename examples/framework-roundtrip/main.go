@@ -78,11 +78,13 @@ func run() error {
 	}
 
 	if err := gc.Init(gc.Config{
-		DSN:           env.DSN,
-		IngestionKey:  env.IngestionKey,
-		ServiceName:   "groundcover-go-framework-roundtrip",
-		Env:           "examples",
-		Release:       gc.Version,
+		DSN:          env.DSN,
+		IngestionKey: env.IngestionKey,
+		ServiceName:  "groundcover-go-framework-roundtrip",
+		Env:          "examples",
+		// Release is the application's version (releaseId / service.version);
+		// the SDK version travels separately in telemetry.sdk.version.
+		Release:       "1.0.0",
 		FlushInterval: time.Second,
 	}); err != nil {
 		return fmt.Errorf("init: %w", err)
@@ -186,7 +188,7 @@ func triggerNetHTTP(testID string) error {
 func triggerGin(testID string) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gcgin.Middleware())
+	r.Use(gcgin.New(gcgin.Options{CaptureContextErrors: true}))
 	r.GET("/checkout", func(c *gin.Context) {
 		markScope(c.Request.Context(), "gin", testID)
 		_ = c.Error(errors.New("framework-roundtrip gin error " + testID))
@@ -200,7 +202,7 @@ func triggerGin(testID string) error {
 
 func triggerEcho(testID string) error {
 	e := echo.New()
-	e.Use(gcecho.Middleware())
+	e.Use(gcecho.New(gcecho.Options{CaptureHandlerErrors: true}))
 	e.GET("/checkout", func(c echo.Context) error {
 		markScope(c.Request().Context(), "echo", testID)
 		return errors.New("framework-roundtrip echo error " + testID)
@@ -213,7 +215,7 @@ func triggerEcho(testID string) error {
 
 func triggerFiber(testID string) error {
 	app := fiber.New()
-	app.Use(gcfiber.Middleware())
+	app.Use(gcfiber.New(gcfiber.Options{CaptureHandlerErrors: true}))
 	app.Get("/checkout", func(c *fiber.Ctx) error {
 		markScope(c.UserContext(), "fiber", testID)
 		return errors.New("framework-roundtrip fiber error " + testID)
@@ -228,10 +230,10 @@ func triggerFiber(testID string) error {
 }
 
 func triggerFastHTTP(testID string) error {
-	handler := gcfasthttp.Middleware(func(ctx *fasthttp.RequestCtx) {
+	handler := gcfasthttp.New(func(ctx *fasthttp.RequestCtx) {
 		markScope(gcfasthttp.ScopeContext(ctx), "fasthttp", testID)
 		panic("framework-roundtrip fasthttp panic " + testID)
-	})
+	}, gcfasthttp.Options{})
 
 	var ctx fasthttp.RequestCtx
 	ctx.Request.Header.SetMethod(http.MethodGet)
@@ -242,7 +244,7 @@ func triggerFastHTTP(testID string) error {
 
 func triggerIris(testID string) error {
 	app := iris.New()
-	app.Use(gciris.Middleware())
+	app.Use(gciris.New(gciris.Options{CaptureContextErrors: true}))
 	app.Get("/checkout", func(ctx iris.Context) {
 		markScope(ctx.Request().Context(), "iris", testID)
 		ctx.StopWithError(http.StatusInternalServerError, errors.New("framework-roundtrip iris error "+testID))
@@ -258,7 +260,7 @@ func triggerIris(testID string) error {
 
 func triggerNegroni(testID string) error {
 	n := negroni.New()
-	n.Use(gcnegroni.Middleware())
+	n.Use(gcnegroni.New(gcnegroni.Options{}))
 	n.UseHandler(withScopeMark(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("framework-roundtrip negroni panic " + testID)
 	}), "negroni", testID))
@@ -269,7 +271,7 @@ func triggerNegroni(testID string) error {
 }
 
 func triggerGRPC(testID string) error {
-	interceptor := gcgrpc.UnaryServerInterceptor()
+	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.Options{CaptureRPCErrors: true})
 	handler := grpc.UnaryHandler(func(ctx context.Context, _ any) (any, error) {
 		markScope(ctx, "grpc", testID)
 		return nil, status.Error(codes.Internal, "framework-roundtrip grpc error "+testID)

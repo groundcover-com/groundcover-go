@@ -11,47 +11,47 @@ import (
 	irishttptest "github.com/kataras/iris/v12/httptest"
 	"github.com/kataras/iris/v12/middleware/recover"
 
-	gc "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 	gciris "github.com/groundcover-com/groundcover-go/contrib/iris"
 )
 
-func newDropClient(t *testing.T) *gc.Client {
+// initDropClient installs a package-level client that drops every event in
+// BeforeSend, so tests observe captures via GlobalStats without any delivery.
+func initDropClient(t *testing.T) {
 	t.Helper()
-	c, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:           "https://example.invalid",
 		FlushInterval: time.Hour,
 		BeforeSend:    func(*gc.Event) *gc.Event { return nil },
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close(context.Background()) })
-	return c
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 }
 
-func newApp(client *gc.Client) *iris.Application {
+func newApp(opts gciris.Options) *iris.Application {
 	app := iris.New()
 	app.Use(recover.New())
-	app.Use(gciris.Middleware(gciris.WithClient(client)))
+	app.Use(gciris.New(opts))
 	return app
 }
 
 func TestIrisCapturesPanic(t *testing.T) {
-	client := newDropClient(t)
-	app := newApp(client)
+	initDropClient(t)
+	app := newApp(gciris.Options{})
 	app.Get("/boom", func(iris.Context) { panic("iris boom") })
 
 	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
 	e.GET("/boom").Expect().Status(http.StatusInternalServerError)
 
-	if got := client.Stats().DroppedBeforeSend; got != 1 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
 		t.Fatalf("expected 1 captured panic, got %d", got)
 	}
 }
 
-func TestIrisCapturesContextErrors(t *testing.T) {
-	client := newDropClient(t)
-	app := newApp(client)
+func TestIrisCapturesContextErrorsWhenEnabled(t *testing.T) {
+	initDropClient(t)
+	app := newApp(gciris.Options{CaptureContextErrors: true})
 	app.Get("/err", func(ctx iris.Context) {
 		ctx.StopWithError(http.StatusInternalServerError, errors.New("handler error"))
 	})
@@ -59,14 +59,29 @@ func TestIrisCapturesContextErrors(t *testing.T) {
 	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
 	e.GET("/err").Expect().Status(http.StatusInternalServerError)
 
-	if got := client.Stats().DroppedBeforeSend; got != 1 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
 		t.Fatalf("expected 1 captured context error, got %d", got)
 	}
 }
 
+func TestIrisContextErrorsNotCapturedByDefault(t *testing.T) {
+	initDropClient(t)
+	app := newApp(gciris.Options{})
+	app.Get("/err", func(ctx iris.Context) {
+		ctx.StopWithError(http.StatusInternalServerError, errors.New("handler error"))
+	})
+
+	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
+	e.GET("/err").Expect().Status(http.StatusInternalServerError)
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
+		t.Fatalf("context errors must not be captured by default, got %d", got)
+	}
+}
+
 func TestIrisSkipsClientErrors(t *testing.T) {
-	client := newDropClient(t)
-	app := newApp(client)
+	initDropClient(t)
+	app := newApp(gciris.Options{CaptureContextErrors: true})
 	app.Get("/teapot", func(ctx iris.Context) {
 		ctx.StopWithError(http.StatusTeapot, errors.New("short and stout"))
 	})
@@ -74,50 +89,49 @@ func TestIrisSkipsClientErrors(t *testing.T) {
 	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
 	e.GET("/teapot").Expect().Status(http.StatusTeapot)
 
-	if got := client.Stats().DroppedBeforeSend; got != 0 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
 		t.Fatalf("expected no captures for client errors, got %d", got)
 	}
 }
 
-func TestIrisErrorCaptureDisabled(t *testing.T) {
-	client := newDropClient(t)
-	app := iris.New()
-	app.Use(recover.New())
-	app.Use(gciris.Middleware(gciris.WithClient(client), gciris.WithErrorCapture(false)))
-	app.Get("/err", func(ctx iris.Context) {
-		ctx.StopWithError(http.StatusInternalServerError, errors.New("handler error"))
-	})
-
-	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
-	e.GET("/err").Expect().Status(http.StatusInternalServerError)
-
-	if got := client.Stats().DroppedBeforeSend; got != 0 {
-		t.Fatalf("expected no captures with error capture disabled, got %d", got)
-	}
-}
-
 func TestIrisSkipsAbortHandlerPanic(t *testing.T) {
-	client := newDropClient(t)
-	app := newApp(client)
+	initDropClient(t)
+	app := newApp(gciris.Options{})
 	app.Get("/abort", func(iris.Context) { panic(http.ErrAbortHandler) })
 
 	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
 	e.GET("/abort").Expect().Status(http.StatusInternalServerError)
 
-	if got := client.Stats().DroppedBeforeSend; got != 0 {
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 0 {
 		t.Fatalf("expected no capture for http.ErrAbortHandler, got %d", got)
 	}
 }
 
+func TestIrisDisableRepanicSwallowsPanic(t *testing.T) {
+	initDropClient(t)
+	app := iris.New()
+	app.Use(gciris.New(gciris.Options{DisableRepanic: true}))
+	app.Get("/boom", func(iris.Context) { panic("iris boom") })
+
+	// No recover middleware installed: the middleware itself swallows the
+	// panic after capturing.
+	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
+	e.GET("/boom").Expect().Status(http.StatusOK)
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured panic, got %d", got)
+	}
+}
+
 func TestIrisHappyPath(t *testing.T) {
-	client := newDropClient(t)
-	app := newApp(client)
+	initDropClient(t)
+	app := newApp(gciris.Options{CaptureContextErrors: true})
 	app.Get("/ok", func(ctx iris.Context) { ctx.StatusCode(http.StatusOK) })
 
 	e := irishttptest.New(t, app, irishttptest.URL("http://example.com"))
 	e.GET("/ok").Expect().Status(http.StatusOK)
 
-	if client.Stats().Captured != 0 || client.Stats().DroppedBeforeSend != 0 {
-		t.Fatalf("no capture expected on happy path, stats=%+v", client.Stats())
+	if gc.GlobalStats().Captured != 0 || gc.GlobalStats().DroppedBeforeSend != 0 {
+		t.Fatalf("no capture expected on happy path, stats=%+v", gc.GlobalStats())
 	}
 }

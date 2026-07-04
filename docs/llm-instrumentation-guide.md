@@ -212,6 +212,26 @@ after capture instead of re-raising it, set
 middleware is expected to turn the panic into a 500 (with nothing written
 before the panic, Gin then finalizes the response as an empty 200).
 
+Echo, Fiber, Iris, Negroni, fasthttp, and gRPC follow the same shape — a `New`
+constructor taking an `Options` struct whose zero value captures panics only:
+
+```go
+e.Use(gcecho.New(gcecho.Options{}))                              // Echo
+app.Use(gcfiber.New(gcfiber.Options{}))                          // Fiber
+app.Use(gciris.New(gciris.Options{}))                            // Iris
+n.Use(gcnegroni.New(gcnegroni.Options{}))                        // Negroni
+h := gcfasthttp.New(handler, gcfasthttp.Options{})               // fasthttp
+grpc.ChainUnaryInterceptor(gcgrpc.UnaryServerInterceptor(gcgrpc.Options{}))
+```
+
+Capturing handler errors is opt-in per framework:
+`gcecho.Options{CaptureHandlerErrors: true}` (errors returned from Echo
+handlers), `gcfiber.Options{CaptureHandlerErrors: true}` (errors returned from
+Fiber handlers), `gciris.Options{CaptureContextErrors: true}` (errors recorded
+on the Iris context), and `gcgrpc.Options{CaptureRPCErrors: true}` (server-fault
+RPC status codes). Every integration also has `DisableRepanic` to swallow the
+panic after capture instead of re-raising it.
+
 The middleware seeds a fresh, isolated scope into each request's context, so
 handler code can call `SetUser`/`WithScope` on `r.Context()` and the captured
 error sees it — no need to thread the returned context back, and nothing leaks
@@ -241,11 +261,12 @@ across requests.
   above them if the process must survive handler panics. fasthttp handlers reach
   the request scope via `gcfasthttp.ScopeContext(ctx)`.
 
-- **Client errors are not captured:** the Gin, Echo, Fiber, Iris, and gRPC
-  integrations skip client-side outcomes (HTTP status < 500; gRPC codes such as
-  `NotFound`, `InvalidArgument`, `Unauthenticated`). Router 404s and validation
-  failures never become error events. Plain (non-HTTP-status) errors returned
-  from handlers are always captured.
+- **Client errors are not captured:** even with error capturing enabled, the
+  Gin, Echo, Fiber, Iris, and gRPC integrations skip client-side outcomes
+  (HTTP status < 500; gRPC codes such as `NotFound`, `InvalidArgument`,
+  `Unauthenticated`). Router 404s and validation failures never become error
+  events. Plain (non-HTTP-status) errors returned from handlers are always
+  captured.
 
 - **Deliberate aborts are not captured:** panics with `http.ErrAbortHandler`
   (the stdlib's quiet-abort sentinel, raised by `httputil.ReverseProxy` on

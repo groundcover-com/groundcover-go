@@ -28,19 +28,18 @@ func (r *recorder) before(e *gc.Event) *gc.Event {
 
 func TestCheckout_CapturesHandledError(t *testing.T) {
 	rec := &recorder{}
-	client, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:         "http://127.0.0.1:0",
 		ServiceName: "examples-iris-test",
 		BeforeSend:  rec.before,
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.CloseTimeout(0) })
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
 
 	app := iris.New()
 	app.Use(recover.New())
-	app.Use(gciris.Middleware(gciris.WithClient(client)))
+	app.Use(gciris.New(gciris.Options{CaptureContextErrors: true}))
 	app.Get("/checkout", func(ctx iris.Context) {
 		ctx.StopWithError(http.StatusInternalServerError, errors.New("checkout failed"))
 	})

@@ -27,18 +27,17 @@ func (r *recorder) before(e *gc.Event) *gc.Event {
 
 func TestCheckout_CapturesUnhandledPanic(t *testing.T) {
 	rec := &recorder{}
-	client, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:         "http://127.0.0.1:0",
 		ServiceName: "examples-negroni-test",
 		BeforeSend:  rec.before,
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.CloseTimeout(0) })
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
 
 	n := negroni.New()
-	n.Use(gcnegroni.Middleware(gcnegroni.WithClient(client)))
+	n.Use(gcnegroni.New(gcnegroni.Options{}))
 	n.UseHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("checkout failed")
 	}))

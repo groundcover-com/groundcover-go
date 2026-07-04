@@ -27,22 +27,21 @@ func (r *recorder) before(e *gc.Event) *gc.Event {
 
 func TestCheckout_CapturesHandledError(t *testing.T) {
 	rec := &recorder{}
-	client, err := gc.New(gc.Config{
+	if err := gc.Init(gc.Config{
 		DSN:         "http://127.0.0.1:0",
 		ServiceName: "examples-grpc-test",
 		BeforeSend:  rec.before,
-	})
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	}); err != nil {
+		t.Fatalf("init client: %v", err)
 	}
-	t.Cleanup(func() { _ = client.CloseTimeout(0) })
+	t.Cleanup(func() { _ = gc.CloseTimeout(0) })
 
-	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.WithClient(client))
+	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.Options{CaptureRPCErrors: true})
 	handler := grpc.UnaryHandler(func(context.Context, any) (any, error) {
 		return nil, status.Error(codes.Internal, "checkout failed")
 	})
 
-	_, err = interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/checkout.Service/Checkout"}, handler)
+	_, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/checkout.Service/Checkout"}, handler)
 	if err == nil {
 		t.Fatal("expected handler error")
 	}

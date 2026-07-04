@@ -1,56 +1,55 @@
-// Package negroni provides Negroni middleware that recovers panics, captures them
-// through groundcover, and seeds a fresh request scope. It is a separate module
-// so the negroni dependency never enters the core SDK's go.sum.
+// Package negroni provides Negroni middleware that recovers panics, captures
+// them through the core SDK, and seeds a fresh request scope. It is a separate
+// module so the negroni dependency never enters the core SDK's go.sum.
 package negroni
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
 	"github.com/urfave/negroni/v3"
 
-	gc "github.com/groundcover-com/groundcover-go"
+	gc "github.com/groundcover-com/groundcover-go" // pragma: allowlist secret
 )
 
-type config struct {
-	client *gc.Client
-}
-
-// Option configures the middleware.
-type Option func(*config)
-
-// WithClient routes captures to an explicit client instead of the global one.
-func WithClient(c *gc.Client) Option {
-	return func(cfg *config) { cfg.client = c }
+// Options configures the middleware. The zero value is valid and captures
+// panics, re-raising them after capture so Negroni's own recovery (or the
+// server) handles the response exactly as it would without the middleware.
+type Options struct {
+	// DisableRepanic turns OFF re-raising the panic after capture, so the
+	// middleware swallows it instead (the response is finalized as-is, an
+	// empty 200 when nothing was written). Leave this off when Negroni's
+	// Recovery middleware is installed: re-raising lets it turn the panic into
+	// a 500 as usual. Panics with http.ErrAbortHandler are always re-raised,
+	// never captured.
+	DisableRepanic bool
 }
 
 type middleware struct {
-	cfg config
+	opts Options
 }
 
-// Middleware returns Negroni middleware. Panics are captured as unhandled errors
-// and re-raised (so Negroni's own recovery, if installed, still runs); panics
-// with http.ErrAbortHandler are re-raised without capture.
-func Middleware(opts ...Option) negroni.Handler {
-	var cfg config
-	for _, o := range opts {
-		o(&cfg)
-	}
-	return &middleware{cfg: cfg}
+// New returns Negroni middleware that reports to the package-level default
+// client configured with the core SDK's Init. Panics are captured as unhandled
+// errors and re-raised (unless Options.DisableRepanic is set); panics with
+// http.ErrAbortHandler are re-raised without capture.
+func New(opts Options) negroni.Handler {
+	return &middleware{opts: opts}
 }
 
 func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	ctx := seedScope(r.Context(), m.cfg.client)
-	r = r.WithContext(ctx)
+	r = r.WithContext(gc.WithIsolatedScope(r.Context()))
 
 	//nolint:contextcheck // capture must read the request context at panic time, not entry time
 	defer func() {
 		if rec := recover(); rec != nil {
-			if !isAbortPanic(rec) {
-				captureRecovered(r.Context(), m.cfg.client, rec, requestAttributes(r))
+			if isAbortPanic(rec) {
+				panic(rec) // deliberate quiet abort: re-raise, never capture
 			}
-			panic(rec)
+			gc.CaptureRecovered(r.Context(), rec, requestAttributes(r))
+			if !m.opts.DisableRepanic {
+				panic(rec)
+			}
 		}
 	}()
 
@@ -70,19 +69,4 @@ func requestAttributes(r *http.Request) gc.Option {
 		"url.path":            r.URL.Path,
 		"server.address":      r.Host,
 	})
-}
-
-func seedScope(ctx context.Context, client *gc.Client) context.Context {
-	if client != nil {
-		return client.WithIsolatedScope(ctx)
-	}
-	return gc.WithIsolatedScope(ctx)
-}
-
-func captureRecovered(ctx context.Context, client *gc.Client, rec any, opts ...gc.Option) {
-	if client != nil {
-		client.CaptureRecovered(ctx, rec, opts...)
-		return
-	}
-	gc.CaptureRecovered(ctx, rec, opts...)
 }
