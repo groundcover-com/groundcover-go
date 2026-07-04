@@ -52,7 +52,7 @@ func New(handler fasthttp.RequestHandler, opts Options) fasthttp.RequestHandler 
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				gc.CaptureRecovered(ScopeContext(ctx), rec, requestAttributes(ctx))
+				gc.CaptureRecovered(ScopeContext(ctx), rec, panicAttributes(ctx))
 				if !opts.DisableRepanic {
 					// fasthttp has no built-in recovery: unless something above
 					// us recovers, the re-raised panic kills the process and
@@ -79,11 +79,19 @@ func ScopeContext(ctx *fasthttp.RequestCtx) context.Context {
 	return context.Background()
 }
 
-func requestAttributes(ctx *fasthttp.RequestCtx) gc.Option {
+// panicAttributes derives attributes on the panic path. The response has not
+// been finalized yet: unless the handler already set a status or wrote a body,
+// the status the request ends with is the 500 an outer recovery layer produces
+// (or the process dies), not the in-flight default.
+func panicAttributes(ctx *fasthttp.RequestCtx) gc.Option {
+	status := ctx.Response.StatusCode()
+	if status == fasthttp.StatusOK && len(ctx.Response.Body()) == 0 {
+		status = fasthttp.StatusInternalServerError
+	}
 	return gc.WithAttributes(gc.Attributes{
 		"http.request.method":       string(ctx.Method()),
 		"url.path":                  string(ctx.Path()),
-		"http.response.status_code": ctx.Response.StatusCode(),
+		"http.response.status_code": status,
 	})
 }
 

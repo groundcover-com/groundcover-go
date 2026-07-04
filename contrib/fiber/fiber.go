@@ -54,7 +54,7 @@ func New(opts Options) fiber.Handler {
 
 		defer func() {
 			if rec := recover(); rec != nil {
-				gc.CaptureRecovered(c.UserContext(), rec, requestAttributes(c))
+				gc.CaptureRecovered(c.UserContext(), rec, panicAttributes(c))
 				if !opts.DisableRepanic {
 					// Fiber has no built-in recovery: unless recover.New() (or
 					// similar) is installed above us, the re-raised panic kills
@@ -85,12 +85,20 @@ func isServerError(err error) bool {
 	return true
 }
 
-func requestAttributes(c *fiber.Ctx) gc.Option {
+// panicAttributes derives attributes on the panic path. The response has not
+// been finalized yet: unless the handler already set a status or wrote a body,
+// the status the request ends with is the 500 the recovery layer produces (or
+// the process dies), not the in-flight default.
+func panicAttributes(c *fiber.Ctx) gc.Option {
+	status := c.Response().StatusCode()
+	if status == fiber.StatusOK && len(c.Response().Body()) == 0 {
+		status = fiber.StatusInternalServerError
+	}
 	return gc.WithAttributes(gc.Attributes{
 		"http.request.method":       c.Method(),
 		"url.path":                  c.Path(),
 		"http.route":                routePath(c),
-		"http.response.status_code": c.Response().StatusCode(),
+		"http.response.status_code": status,
 	})
 }
 

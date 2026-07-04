@@ -131,6 +131,7 @@ func TestIrisInertWhenSDKDisabled(t *testing.T) {
 	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
 		t.Fatalf("init disabled client: %v", err)
 	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 	app := newApp(gciris.Options{CaptureContextErrors: true})
 	app.Get("/ok", func(ctx iris.Context) { _, _ = ctx.WriteString("ok") })
 	app.Get("/boom", func(iris.Context) { panic("iris boom") })

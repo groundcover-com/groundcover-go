@@ -99,6 +99,7 @@ func TestFastHTTPInertWhenSDKDisabled(t *testing.T) {
 	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
 		t.Fatalf("init disabled client: %v", err)
 	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 	okHandler := gcfasthttp.New(func(ctx *fasthttp.RequestCtx) {
 		ctx.SetStatusCode(fasthttp.StatusOK)
 		ctx.SetBodyString("ok")

@@ -6,10 +6,9 @@ package gin
 
 import (
 	"errors"
-	"net"
 	"net/http"
-	"os"
 	"strings"
+	"syscall"
 
 	"github.com/gin-gonic/gin"
 
@@ -55,7 +54,7 @@ func New(opts Options) gin.HandlerFunc {
 		defer func() {
 			if rec := recover(); rec != nil {
 				if !isAbortPanic(rec) && !isBrokenPipePanic(rec) {
-					gc.CaptureRecovered(c.Request.Context(), rec, requestAttributes(c))
+					gc.CaptureRecovered(c.Request.Context(), rec, panicAttributes(c))
 				}
 				if !opts.DisableRepanic {
 					panic(rec) // re-raise to Gin's recovery / the server
@@ -94,20 +93,18 @@ func isAbortPanic(rec any) bool {
 // connection-reset network error: the client went away mid-response. Gin's own
 // recovery special-cases these (it aborts without writing a 500); they are
 // connection conditions, not application faults, and are not captured.
+// errors.Is against the syscall errnos handles any wrapping; the text match is
+// a fallback for error chains that don't unwrap to an errno (mirrors Gin's own
+// string-based detection).
 func isBrokenPipePanic(rec any) bool {
 	err, ok := rec.(error)
 	if !ok {
 		return false
 	}
-	var opErr *net.OpError
-	if !errors.As(err, &opErr) {
-		return false
+	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return true
 	}
-	var sysErr *os.SyscallError
-	if !errors.As(opErr.Err, &sysErr) {
-		return false
-	}
-	msg := strings.ToLower(sysErr.Error())
+	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer")
 }
 
@@ -117,5 +114,22 @@ func requestAttributes(c *gin.Context) gc.Option {
 		"url.path":                  c.Request.URL.Path,
 		"http.route":                c.FullPath(),
 		"http.response.status_code": c.Writer.Status(),
+	})
+}
+
+// panicAttributes is requestAttributes for the panic path: the response has
+// not been finalized yet, so unless the handler already wrote a response the
+// captured status is the 500 the recovery layer will produce, not Gin's
+// in-flight default (200).
+func panicAttributes(c *gin.Context) gc.Option {
+	status := c.Writer.Status()
+	if !c.Writer.Written() {
+		status = http.StatusInternalServerError
+	}
+	return gc.WithAttributes(gc.Attributes{
+		"http.request.method":       c.Request.Method,
+		"url.path":                  c.Request.URL.Path,
+		"http.route":                c.FullPath(),
+		"http.response.status_code": status,
 	})
 }

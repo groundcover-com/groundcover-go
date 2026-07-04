@@ -143,6 +143,7 @@ func TestFiberInertWhenSDKDisabled(t *testing.T) {
 	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
 		t.Fatalf("init disabled client: %v", err)
 	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 	app := fiber.New()
 	app.Use(recover.New())
 	app.Use(gcfiber.New(gcfiber.Options{CaptureHandlerErrors: true}))

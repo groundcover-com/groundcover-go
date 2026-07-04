@@ -221,7 +221,10 @@ app.Use(gcfiber.New(gcfiber.Options{}))                          // Fiber
 app.Use(gciris.New(gciris.Options{}))                            // Iris
 n.Use(gcnegroni.New(gcnegroni.Options{}))                        // Negroni
 h := gcfasthttp.New(handler, gcfasthttp.Options{})               // fasthttp
-grpc.ChainUnaryInterceptor(gcgrpc.UnaryServerInterceptor(gcgrpc.Options{}))
+srv := grpc.NewServer( // gRPC
+	grpc.ChainUnaryInterceptor(gcgrpc.UnaryServerInterceptor(gcgrpc.Options{})),
+	grpc.ChainStreamInterceptor(gcgrpc.StreamServerInterceptor(gcgrpc.Options{})),
+)
 ```
 
 Capturing handler errors is opt-in per framework:

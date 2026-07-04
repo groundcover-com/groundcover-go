@@ -54,7 +54,7 @@ func New(opts Options) echo.MiddlewareFunc {
 					if isAbortPanic(rec) {
 						panic(rec) // deliberate quiet abort: re-raise, never capture
 					}
-					gc.CaptureRecovered(c.Request().Context(), rec, requestAttributes(c))
+					gc.CaptureRecovered(c.Request().Context(), rec, panicAttributes(c))
 					if !opts.DisableRepanic {
 						panic(rec) // re-raise to Echo's recovery / the server
 					}
@@ -88,12 +88,20 @@ func isServerError(err error) bool {
 	return true
 }
 
-func requestAttributes(c echo.Context) gc.Option {
+// panicAttributes derives attributes on the panic path. The response has not
+// been finalized yet: unless the handler already committed a response, the
+// status the request ends with is the 500 Echo's recovery produces, not the
+// in-flight default.
+func panicAttributes(c echo.Context) gc.Option {
+	status := c.Response().Status
+	if !c.Response().Committed {
+		status = http.StatusInternalServerError
+	}
 	return gc.WithAttributes(gc.Attributes{
 		"http.request.method":       c.Request().Method,
 		"url.path":                  c.Request().URL.Path,
 		"http.route":                c.Path(),
-		"http.response.status_code": c.Response().Status,
+		"http.response.status_code": status,
 	})
 }
 

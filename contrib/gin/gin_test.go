@@ -174,6 +174,7 @@ func TestGinInertWhenSDKDisabled(t *testing.T) {
 	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
 		t.Fatalf("init disabled client: %v", err)
 	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 	r := newEngine(gcgin.Options{CaptureContextErrors: true})
 	r.GET("/ok", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	r.GET("/boom", func(*gin.Context) { panic("gin boom") })

@@ -49,15 +49,39 @@ func TestUnaryCapturesPanicAndReRaises(t *testing.T) {
 	}
 }
 
-func TestUnaryDisableRepanicSwallowsPanic(t *testing.T) {
+func TestUnaryDisableRepanicSwallowsPanicAndFailsRPC(t *testing.T) {
 	initDropClient(t)
 	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.Options{DisableRepanic: true})
 	handler := grpc.UnaryHandler(func(context.Context, any) (any, error) {
 		panic("grpc boom")
 	})
 
-	// Must not panic: the interceptor swallows it after capturing.
-	_, _ = interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}, handler)
+	// Must not panic: the interceptor swallows it after capturing, and the
+	// RPC must fail with codes.Internal rather than succeed with (nil, nil).
+	resp, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}, handler)
+	if resp != nil {
+		t.Fatalf("expected nil response after swallowed panic, got %v", resp)
+	}
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal after swallowed panic, got %v", err)
+	}
+
+	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
+		t.Fatalf("expected 1 captured panic, got %d", got)
+	}
+}
+
+func TestStreamDisableRepanicSwallowsPanicAndFailsRPC(t *testing.T) {
+	initDropClient(t)
+	interceptor := gcgrpc.StreamServerInterceptor(gcgrpc.Options{DisableRepanic: true})
+	handler := grpc.StreamHandler(func(any, grpc.ServerStream) error {
+		panic("stream boom")
+	})
+
+	err := interceptor(nil, &stubServerStream{ctx: context.Background()}, &grpc.StreamServerInfo{FullMethod: "/test.Service/Stream"}, handler)
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal after swallowed panic, got %v", err)
+	}
 
 	if got := gc.GlobalStats().DroppedBeforeSend; got != 1 {
 		t.Fatalf("expected 1 captured panic, got %d", got)
@@ -175,6 +199,7 @@ func TestUnaryInertWhenSDKDisabled(t *testing.T) {
 	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
 		t.Fatalf("init disabled client: %v", err)
 	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 	interceptor := gcgrpc.UnaryServerInterceptor(gcgrpc.Options{CaptureRPCErrors: true})
 
 	resp, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"},

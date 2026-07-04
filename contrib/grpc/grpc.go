@@ -11,7 +11,12 @@
 // process must survive handler panics, install a recovery interceptor ahead of
 // these in the chain:
 //
-//	grpc.ChainUnaryInterceptor(recoveryInterceptor, gcgrpc.UnaryServerInterceptor(gcgrpc.Options{}))
+//	srv := grpc.NewServer(
+//		grpc.ChainUnaryInterceptor(recoveryInterceptor, gcgrpc.UnaryServerInterceptor(gcgrpc.Options{})),
+//	)
+//
+// Alternatively, set Options.DisableRepanic to swallow the panic after capture
+// and fail the RPC with codes.Internal.
 package grpc
 
 import (
@@ -38,12 +43,11 @@ type Options struct {
 	// captured: they are request outcomes, not application faults.
 	CaptureRPCErrors bool
 
-	// DisableRepanic turns OFF re-raising the panic after capture, so the
-	// interceptor swallows it instead (the RPC then completes without a
-	// response; prefer an outer recovery interceptor that converts panics to
-	// codes.Internal). Leave this off when such a recovery interceptor is
-	// installed, or when the process should crash on panics as it would
-	// without the interceptor.
+	// DisableRepanic turns OFF re-raising the panic after capture: the
+	// interceptor swallows it and fails the RPC with codes.Internal (a
+	// generic message; the captured event carries the panic details). Leave
+	// this off when an outer recovery interceptor is installed, or when the
+	// process should crash on panics as it would without the interceptor.
 	DisableRepanic bool
 }
 
@@ -64,6 +68,9 @@ func UnaryServerInterceptor(opts Options) grpc.UnaryServerInterceptor {
 					flushBestEffort() //nolint:contextcheck // deliberate detached flush before re-raise
 					panic(rec)
 				}
+				// Swallowing the panic must not turn it into an OK response:
+				// fail the RPC like a recovery interceptor would.
+				resp, err = nil, status.Error(codes.Internal, "internal server error")
 			}
 		}()
 
@@ -90,6 +97,9 @@ func StreamServerInterceptor(opts Options) grpc.StreamServerInterceptor {
 					flushBestEffort() //nolint:contextcheck // deliberate detached flush before re-raise
 					panic(rec)
 				}
+				// Swallowing the panic must not turn it into an OK stream:
+				// fail the RPC like a recovery interceptor would.
+				err = status.Error(codes.Internal, "internal server error")
 			}
 		}()
 

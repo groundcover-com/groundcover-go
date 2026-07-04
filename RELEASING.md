@@ -49,7 +49,11 @@ version of the core.
    git tag contrib/gin/v0.1.0
    git tag contrib/echo/v0.1.0   # ... and the other contrib modules
    git tag prometheus/v0.1.0
-   git push origin --tags
+   # Push the release tags explicitly (never `--tags`, which would also
+   # publish any unrelated or stale local tags):
+   git push origin v0.1.0 contrib/gin/v0.1.0 contrib/echo/v0.1.0 \
+     contrib/fiber/v0.1.0 contrib/fasthttp/v0.1.0 contrib/iris/v0.1.0 \
+     contrib/negroni/v0.1.0 contrib/grpc/v0.1.0 prometheus/v0.1.0
    ```
 
 4. **Verify go-gettability from a clean checkout** (outside this repo):

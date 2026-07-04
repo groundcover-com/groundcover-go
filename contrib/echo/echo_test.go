@@ -153,6 +153,7 @@ func TestEchoInertWhenSDKDisabled(t *testing.T) {
 	if err := gc.Init(gc.Config{Disabled: true}); err != nil {
 		t.Fatalf("init disabled client: %v", err)
 	}
+	t.Cleanup(func() { _ = gc.Close(context.Background()) })
 	e := newEcho(gcecho.Options{CaptureHandlerErrors: true})
 	e.GET("/ok", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	e.GET("/err", func(echo.Context) error { return errors.New("handler error") })
