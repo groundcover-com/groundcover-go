@@ -20,9 +20,9 @@ import (
 )
 
 // Options configures the middleware. The zero value is valid and captures
-// panics only, mirroring Sentry's Iris integration: the panic is captured as an
-// unhandled error and re-raised so Iris's own recovery (or the server) handles
-// the response exactly as it would without the middleware.
+// panics only: the panic is captured as an unhandled error and re-raised so
+// Iris's own recovery (or the server) handles the response exactly as it
+// would without the middleware.
 type Options struct {
 	// CaptureContextErrors turns ON capturing errors recorded on the Iris
 	// context (via StopWithError and similar) as handled errors. Off by

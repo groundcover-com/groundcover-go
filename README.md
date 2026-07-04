@@ -72,7 +72,7 @@ func main() {
 Middleware is provided for net/http and every framework in the
 [Optional integrations](#optional-integrations) table below. All follow the
 same shape — a `New` constructor taking an `Options` struct whose zero value
-captures panics only (Sentry-style); capturing handler errors is opt-in:
+captures panics only; capturing handler errors is opt-in:
 
 ```go
 import gcgin "github.com/groundcover-com/groundcover-go/contrib/gin"

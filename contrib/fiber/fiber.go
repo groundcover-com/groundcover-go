@@ -24,9 +24,9 @@ import (
 )
 
 // Options configures the middleware. The zero value is valid and captures
-// panics only, mirroring Sentry's Fiber integration: the panic is captured as
-// an unhandled error and re-raised so Fiber's recover middleware (or the
-// process) handles it exactly as it would without the middleware.
+// panics only: the panic is captured as an unhandled error and re-raised so
+// Fiber's recover middleware (or the process) handles it exactly as it would
+// without the middleware.
 type Options struct {
 	// CaptureHandlerErrors turns ON capturing errors returned from handlers as
 	// handled errors. Off by default: only panics are captured unless this is

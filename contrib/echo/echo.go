@@ -20,9 +20,9 @@ import (
 )
 
 // Options configures the middleware. The zero value is valid and captures
-// panics only, mirroring Sentry's Echo integration: the panic is captured as an
-// unhandled error and re-raised so Echo's own recovery (or the server) handles
-// the response exactly as it would without the middleware.
+// panics only: the panic is captured as an unhandled error and re-raised so
+// Echo's own recovery (or the server) handles the response exactly as it
+// would without the middleware.
 type Options struct {
 	// CaptureHandlerErrors turns ON capturing errors returned from handlers as
 	// handled errors. Off by default: only panics are captured unless this is
