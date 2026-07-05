@@ -3,7 +3,7 @@ module github.com/groundcover-com/groundcover-go/contrib/fasthttp
 go 1.25.0
 
 require (
-	github.com/groundcover-com/groundcover-go v0.1.1
+	github.com/groundcover-com/groundcover-go v0.2.0
 	github.com/valyala/fasthttp v1.72.0
 )
 
