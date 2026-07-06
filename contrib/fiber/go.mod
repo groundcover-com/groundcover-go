@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.13
-	github.com/groundcover-com/groundcover-go v0.2.1
+	github.com/groundcover-com/groundcover-go v0.2.2
 )
 
 require (
