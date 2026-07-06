@@ -3,7 +3,7 @@ module github.com/groundcover-com/groundcover-go/contrib/echo
 go 1.25.0
 
 require (
-	github.com/groundcover-com/groundcover-go v0.2.0
+	github.com/groundcover-com/groundcover-go v0.2.1
 	github.com/labstack/echo/v4 v4.10.0
 )
 
