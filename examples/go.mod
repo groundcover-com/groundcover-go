@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gofiber/fiber/v2 v2.52.13
-	github.com/groundcover-com/groundcover-go v0.2.0
+	github.com/groundcover-com/groundcover-go v0.2.1
 	github.com/groundcover-com/groundcover-go/contrib/echo v0.1.1
 	github.com/groundcover-com/groundcover-go/contrib/fasthttp v0.1.1
 	github.com/groundcover-com/groundcover-go/contrib/fiber v0.1.1
@@ -111,6 +111,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
+	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	moul.io/http2curl/v2 v2.3.0 // indirect
 )
