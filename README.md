@@ -132,6 +132,24 @@ for wiring details, including middleware ordering.
 Each optional integration with third-party dependencies is a **separate Go
 module**, so the core `go.sum` stays dependency-free.
 
+The contrib modules declare these minimum framework versions — the oldest
+releases the middleware is built and tested against. They never sit below a
+release with a known published vulnerability fix, which is why Fiber requires
+`v2.52.13`: every earlier `v2.52.x` patch has CVE fixes above it.
+
+| Framework | Minimum version |
+| --------- | --------------- |
+| Echo (`v4`) | `v4.10.0` |
+| FastHTTP | `v1.52.0` |
+| Fiber (`v2`) | `v2.52.13` |
+| Gin | `v1.9.1` |
+| gRPC | `v1.80.0` |
+| Iris (`v12`) | `v12.2.0` |
+| Negroni (`v3`) | `v3.1.1` |
+
+Projects on newer framework versions are unaffected: Go's minimal version
+selection keeps whichever version your own `go.mod` requires.
+
 ## Runtime support
 
 The library supports the **two most recent Go majors** (today **1.25** and **1.26**),
