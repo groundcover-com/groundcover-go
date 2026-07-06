@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/groundcover-com/groundcover-go v0.2.0
-	github.com/valyala/fasthttp v1.72.0
+	github.com/valyala/fasthttp v1.52.0
 )
 
 require (

@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/groundcover-com/groundcover-go v0.2.0
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.80.0
 )
 
 require (
