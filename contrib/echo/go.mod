@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/groundcover-com/groundcover-go v0.2.0
-	github.com/labstack/echo/v4 v4.15.4
+	github.com/labstack/echo/v4 v4.10.0
 )
 
 require (
