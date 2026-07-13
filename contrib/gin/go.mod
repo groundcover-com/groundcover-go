@@ -1,6 +1,6 @@
 module github.com/groundcover-com/groundcover-go/contrib/gin
 
-go 1.25.12
+go 1.25.0
 
 require (
 	github.com/gin-gonic/gin v1.9.1

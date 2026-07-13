@@ -1,6 +1,6 @@
 module github.com/groundcover-com/groundcover-go/contrib/fiber
 
-go 1.25.12
+go 1.25.0
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.14

@@ -1,6 +1,6 @@
 module github.com/groundcover-com/groundcover-go/prometheus
 
-go 1.25.12
+go 1.25
 
 require (
 	github.com/VictoriaMetrics/metrics v1.44.0
