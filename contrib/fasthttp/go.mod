@@ -1,6 +1,6 @@
 module github.com/groundcover-com/groundcover-go/contrib/fasthttp
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/groundcover-com/groundcover-go v0.2.2
