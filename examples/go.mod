@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gofiber/fiber/v2 v2.52.14
-	github.com/groundcover-com/groundcover-go v0.2.2
+	github.com/groundcover-com/groundcover-go v0.2.3
 	github.com/groundcover-com/groundcover-go/contrib/echo v0.1.1
 	github.com/groundcover-com/groundcover-go/contrib/fasthttp v0.1.1
 	github.com/groundcover-com/groundcover-go/contrib/fiber v0.1.1
