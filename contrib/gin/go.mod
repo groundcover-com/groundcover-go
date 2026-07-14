@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/gin-gonic/gin v1.9.1
-	github.com/groundcover-com/groundcover-go v0.2.2
+	github.com/groundcover-com/groundcover-go v0.2.3
 )
 
 require (
