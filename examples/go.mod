@@ -17,7 +17,7 @@ require (
 	github.com/labstack/echo/v4 v4.15.4
 	github.com/urfave/negroni/v3 v3.1.1
 	github.com/valyala/fasthttp v1.72.0
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.82.1
 )
 
 require (
