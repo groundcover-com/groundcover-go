@@ -3,7 +3,7 @@ module github.com/groundcover-com/groundcover-go/contrib/grpc
 go 1.25.0
 
 require (
-	github.com/groundcover-com/groundcover-go v0.2.2
+	github.com/groundcover-com/groundcover-go v0.2.3
 	google.golang.org/grpc v1.80.0
 )
 
