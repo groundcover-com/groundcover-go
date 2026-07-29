@@ -338,10 +338,10 @@ func (w *Worker[T]) Close(ctx context.Context) error {
 // waitInflight blocks until all in-flight sends complete or ctx expires.
 func (w *Worker[T]) waitInflight(ctx context.Context) error {
 	done := make(chan struct{})
-	go func() {
+	safeguard.Go(func() {
 		w.inflight.Wait()
 		close(done)
-	}()
+	}, w.onPanic)
 	select {
 	case <-done:
 		return nil
