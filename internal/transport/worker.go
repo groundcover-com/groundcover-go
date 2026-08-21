@@ -356,6 +356,7 @@ func (w *Worker[T]) Close(ctx context.Context) error {
 			if waitErr := w.waitInflight(ctx); waitErr != nil && err == nil {
 				err = waitErr
 			}
+			_ = safeguard.Do(w.reportQueue, w.onPanic)
 			w.releaseDispatch()
 		} else if err == nil {
 			err = ctx.Err()

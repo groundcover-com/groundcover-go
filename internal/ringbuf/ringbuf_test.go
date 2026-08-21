@@ -61,11 +61,13 @@ func TestDropOldestOnByteOverflow(t *testing.T) {
 	}
 }
 
-func TestSingleOversizedItemKept(t *testing.T) {
+func TestSingleOversizedItemRejected(t *testing.T) {
 	b := ringbuf.New[int](10, 5, func(int) int { return 100 })
-	b.Push(42)
-	if b.Len() != 1 {
-		t.Fatalf("an oversized newest item must be kept, len=%d", b.Len())
+	if dropped := b.Push(42); dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", dropped)
+	}
+	if b.Len() != 0 {
+		t.Fatalf("an oversized item must be rejected, len=%d", b.Len())
 	}
 }
 
@@ -95,16 +97,6 @@ func TestPopBatchAlwaysReturnsOne(t *testing.T) {
 	batch := b.PopBatch(10, 1) // byte limit smaller than item
 	if len(batch) != 1 {
 		t.Fatalf("expected at least one item, got %d", len(batch))
-	}
-}
-
-func TestPushRejectsItemLargerThanByteBudget(t *testing.T) {
-	b := ringbuf.New[int](10, 100, func(value int) int { return value })
-	if dropped := b.Push(101); dropped != 1 {
-		t.Fatalf("dropped = %d, want 1", dropped)
-	}
-	if b.Len() != 0 || b.Bytes() != 0 {
-		t.Fatalf("oversized item retained: len=%d bytes=%d", b.Len(), b.Bytes())
 	}
 }
 
