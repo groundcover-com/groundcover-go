@@ -293,6 +293,29 @@ groundcover.CaptureMessage(ctx, "falling back to stale cache", groundcover.Level
 
 Levels: `LevelDebug`, `LevelInfo`, `LevelWarning`, `LevelError`, `LevelFatal`.
 
+## 6b. Application logs (opt-in, no agent or tailer)
+
+Set `EnableLogs: true` in the config to deliver application logs directly to
+groundcover. Logs travel on their own bounded queue, so log volume never evicts
+error events. Two ways to emit:
+
+```go
+// Direct emission API — for new call sites:
+groundcover.LogInfo(ctx, "order created", groundcover.Attributes{"order_id": id})
+groundcover.LogErrorf(ctx, "charge %s failed", chargeID)
+
+// slog bridge — existing slog call sites work unchanged:
+logger := slog.New(gcslog.NewHandler(gcslog.Options{}))
+logger.Info("order created", "order_id", "o-9")
+```
+
+The bridge import path is `github.com/groundcover-com/groundcover-go/gcslog`
+(stdlib-only, part of the core module). Records inherit identity/attributes
+from the context scope, exactly like error events. Scrub or sample records with
+`BeforeSendLog` (the log-signal counterpart of `BeforeSend`); identity hashing
+via `Hasher` applies to logs too. Always pass the request context so scope
+enrichment carries over.
+
 ## 7. Scrub PII / secrets (when handling sensitive data)
 
 `BeforeSend` is the single chokepoint. Return `nil` to drop an event; mutate and

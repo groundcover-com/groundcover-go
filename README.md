@@ -11,8 +11,8 @@ The official [groundcover](https://groundcover.com) error tracking library for G
 [![Go Version](https://img.shields.io/github/go-mod/go-version/groundcover-com/groundcover-go)](go.mod)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **v1 scope: error tracking.** Tracing, profiling, logs, and metrics producers
-> are planned on top of the same shared core.
+> **Scope: error tracking, plus direct log delivery (opt-in).** Tracing,
+> profiling, and metrics producers are planned on top of the same shared core.
 
 `groundcover-go` captures application errors and panics and ships them to
 groundcover with a strong safety guarantee: **the library never affects the host
@@ -67,6 +67,41 @@ func main() {
   key shows up as *no data* rather than an exception. It is optional **only** when
   `DSN` points at a local in-cluster sensor (which needs no auth).
 
+### Logs — no agent, no tailer
+
+With `EnableLogs: true`, the SDK delivers application logs straight to
+groundcover over the same authenticated pipeline used for errors. Logs travel
+on their **own bounded queue**, so log volume never evicts or delays error
+events.
+
+There are two layers, by design:
+
+1. **The emission API** — push a log record (and, later, other signals)
+   directly from code. This is also what auto-collection and third-party
+   integrations build on:
+
+```go
+groundcover.LogInfo(ctx, "order created", groundcover.Attributes{"order_id": id})
+groundcover.LogErrorf(ctx, "charge %s failed after %d tries", chargeID, tries)
+```
+
+2. **Bridges** — adapters from existing logging libraries onto the emission
+   API, Sentry-style. The stdlib `log/slog` bridge ships in core (zero extra
+   dependencies); bridges for third-party loggers (logrus, zap, ...) will live
+   in `contrib/` nested modules:
+
+```go
+import "github.com/groundcover-com/groundcover-go/gcslog"
+
+logger := slog.New(gcslog.NewHandler(gcslog.Options{})) // uses the Init'd client
+logger.Info("order created", "order_id", "o-9")         // delivered to groundcover
+```
+
+Records inherit identity/attributes from the request scope (`SetUser` /
+`WithScope`), can be scrubbed or sampled with `BeforeSendLog`, and are
+observable via `LogStats()` and the Prometheus bridge
+(`groundcover_sdk_logs_*`).
+
 ### Web frameworks
 
 Middleware is provided for net/http and every framework in the
@@ -119,6 +154,7 @@ for wiring details, including middleware ordering.
 | Module | Import path | Adds |
 | ------ | ----------- | ---- |
 | net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` | stdlib only (part of core) |
+| slog bridge (logs) | `github.com/groundcover-com/groundcover-go/gcslog` | stdlib only (part of core) |
 | Echo middleware | `github.com/groundcover-com/groundcover-go/contrib/echo` | `github.com/labstack/echo/v4` |
 | FastHTTP middleware | `github.com/groundcover-com/groundcover-go/contrib/fasthttp` | `github.com/valyala/fasthttp` |
 | Fiber middleware | `github.com/groundcover-com/groundcover-go/contrib/fiber` | `github.com/gofiber/fiber/v2` |
