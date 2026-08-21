@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/groundcover-com/groundcover-go/logs"
 )
@@ -152,5 +154,58 @@ func TestStandaloneSanitizesNonFiniteAndRejectsOversizedRecords(t *testing.T) {
 	client.Info(context.Background(), "after close")
 	if stats := client.Stats(); stats.Captured != 1 || stats.QueuePendingItems != 0 {
 		t.Fatalf("post-close stats = %+v", stats)
+	}
+}
+
+// A BeforeSend callback that re-enters the client (a common accident when the
+// callback logs) must not deadlock against a concurrent Close.
+func TestStandaloneBeforeSendReentrancyDoesNotDeadlock(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	var client *logs.Client
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	newClient, err := logs.New(logs.Config{
+		DSN:        server.URL,
+		HTTPClient: server.Client(),
+		BeforeSend: func(record *logs.Record) *logs.Record {
+			once.Do(func() {
+				close(entered)
+				<-release
+				// Give Close time to block on the lifecycle barrier before
+				// re-entering, so the deadlock is deterministic if the barrier
+				// is ever held across this callback again.
+				time.Sleep(100 * time.Millisecond)
+				client.Info(context.Background(), "re-entrant")
+			})
+			return record
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client = newClient
+
+	go client.Info(context.Background(), "outer")
+	<-entered
+
+	closed := make(chan error, 1)
+	go func() {
+		// Close blocks on the lifecycle barrier while BeforeSend is running.
+		close(release)
+		closed <- client.Close(context.Background())
+	}()
+
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close deadlocked against a re-entrant BeforeSend")
 	}
 }

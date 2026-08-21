@@ -52,7 +52,12 @@ func New[T any](maxItems, maxBytes int, sizeOf Sizer[T]) *Buffer[T] {
 // blocks; the return value is the number of existing or incoming entries
 // dropped.
 func (b *Buffer[T]) Push(item T) (dropped int) {
-	size := b.sizeOf(item)
+	return b.PushSized(item, b.sizeOf(item))
+}
+
+// PushSized is Push for callers that already know the item's size and want to
+// avoid recomputing it. The size is clamped to a minimum of one.
+func (b *Buffer[T]) PushSized(item T, size int) (dropped int) {
 	if size < 1 {
 		size = 1
 	}

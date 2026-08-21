@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/groundcover-com/groundcover-go/internal/ringbuf"
@@ -25,8 +26,12 @@ type Client struct {
 	ring     *ringbuf.Buffer[*Record]
 	worker   *transport.Worker[*Record]
 
+	// closing is set before Close drains, and lifecycleMu is held for reading
+	// only across the enqueue itself. Together they guarantee that no record
+	// lands in the ring after the final drain, without ever holding a lock
+	// across user callbacks.
+	closing     atomic.Bool
 	lifecycleMu sync.RWMutex
-	closing     bool
 }
 
 // New constructs a standalone logs Client.
@@ -97,9 +102,7 @@ func (c *Client) EmitRecord(_ context.Context, record Record) {
 		return
 	}
 	safeguard.Do(func() {
-		c.lifecycleMu.RLock()
-		defer c.lifecycleMu.RUnlock()
-		if c.closing {
+		if c.closing.Load() {
 			return
 		}
 		if !record.Level.valid() {
@@ -129,8 +132,16 @@ func (c *Client) EmitRecord(_ context.Context, record Record) {
 			return
 		}
 
+		// The enqueue itself runs under the read lock: Close takes the write
+		// lock after setting closing, so a record is either buffered before
+		// the final drain or dropped here.
+		c.lifecycleMu.RLock()
+		defer c.lifecycleMu.RUnlock()
+		if c.closing.Load() {
+			return
+		}
 		c.metrics.IncCaptured()
-		dropped := c.ring.Push(current)
+		dropped := c.ring.PushSized(current, recordBytes)
 		if dropped > 0 {
 			c.metrics.AddDropped(selfmetrics.DropOverflow, int64(dropped))
 		}
@@ -194,9 +205,11 @@ func (c *Client) Close(ctx context.Context) error {
 	if c == nil || c.disabled {
 		return nil
 	}
+	c.closing.Store(true)
+	// Drain any emit that already passed the closing check before stopping the
+	// worker, so its record is included in the final drain.
 	c.lifecycleMu.Lock()
-	c.closing = true
-	c.lifecycleMu.Unlock()
+	c.lifecycleMu.Unlock() //nolint:staticcheck // lock/unlock is the barrier itself
 	return c.worker.Close(ctx)
 }
 
