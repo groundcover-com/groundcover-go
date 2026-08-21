@@ -56,7 +56,8 @@ func (r *renderer) addSource(sourceName string, text []byte) (srcErrs []error, f
 			text = nil
 		}
 		line = bytes.TrimRight(line, "\r")
-		if len(bytes.TrimSpace(line)) == 0 {
+		line = bytes.TrimLeft(line, " \t")
+		if len(line) == 0 {
 			continue
 		}
 		if line[0] == '#' {

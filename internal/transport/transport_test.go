@@ -441,14 +441,24 @@ func TestWorkerCloseTimesOutWhileFlushHoldsGate(t *testing.T) {
 		t.Fatal("Flush did not start a send")
 	}
 
+	ring.Push(2)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if err := w.Close(ctx); err == nil {
 		t.Fatal("Close should time out while Flush holds the drain gate")
 	}
+	if ring.Len() == 0 {
+		t.Fatal("timed-out Close must not drop the retryable drain")
+	}
 
 	close(unblock)
 	if err := <-flushErr; err != nil {
 		t.Fatalf("Flush: %v", err)
+	}
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	if ring.Len() != 0 {
+		t.Fatalf("retry Close should drain remaining items, got %d", ring.Len())
 	}
 }

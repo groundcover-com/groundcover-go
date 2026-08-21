@@ -136,6 +136,22 @@ func TestMetadataIsDeduplicatedAcrossSources(t *testing.T) {
 	}
 }
 
+func TestIndentedPrometheusCommentsAreAccepted(t *testing.T) {
+	cs := newCaptureServer(t)
+	source := textSource("  # TYPE indented_metric gauge\n  indented_metric 9\n")
+	client, err := New(testConfig(cs), source)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := client.Push(context.Background()); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	body := cs.last().body
+	if !strings.Contains(body, "# TYPE indented_metric gauge") || !strings.Contains(body, "indented_metric{") {
+		t.Fatalf("indented exposition dropped:\n%s", body)
+	}
+}
+
 func TestInjectionThroughPush(t *testing.T) {
 	cs := newCaptureServer(t)
 	source := textSource(strings.Join([]string{

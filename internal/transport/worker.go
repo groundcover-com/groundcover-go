@@ -109,10 +109,9 @@ type Worker[T any] struct {
 
 	rng *jitterRNG
 
-	startOnce sync.Once
-	closeOnce sync.Once
-	closeMu   sync.Mutex
-	closeErr  error
+	startOnce  sync.Once
+	stopOnce   sync.Once
+	cancelOnce sync.Once
 }
 
 // NewWorker constructs a Worker. ring, sender and encode are required; obs and
@@ -336,35 +335,25 @@ func (w *Worker[T]) Flush(ctx context.Context) error {
 }
 
 // Close stops the worker, drains remaining items, and waits for in-flight sends,
-// all bounded by ctx. It is idempotent. The drain is caller-driven so it also
-// covers the case where the loop already exited (e.g. after self-disable).
+// all bounded by ctx. Stopping the loop happens once; a timed-out Close can be
+// retried and will still drain. The drain is caller-driven so it also covers
+// the case where the loop already exited (e.g. after self-disable).
 func (w *Worker[T]) Close(ctx context.Context) error {
-	w.closeOnce.Do(func() {
-		var err error
-		close(w.stop)
-		select {
-		case <-w.stopped:
-		case <-ctx.Done():
-			err = ctx.Err()
-		}
-		if w.acquireDispatch(ctx) {
-			w.dispatchReadyLocked(ctx) // drain anything the loop did not (e.g. after self-disable)
-			if waitErr := w.waitInflight(ctx); waitErr != nil && err == nil {
-				err = waitErr
-			}
-			_ = safeguard.Do(w.reportQueue, w.onPanic)
-			w.releaseDispatch()
-		} else if err == nil {
-			err = ctx.Err()
-		}
-		w.cancelBase()
-		w.closeMu.Lock()
-		w.closeErr = err
-		w.closeMu.Unlock()
-	})
-	w.closeMu.Lock()
-	defer w.closeMu.Unlock()
-	return w.closeErr
+	w.stopOnce.Do(func() { close(w.stop) })
+	select {
+	case <-w.stopped:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if !w.acquireDispatch(ctx) {
+		return ctx.Err()
+	}
+	defer w.releaseDispatch()
+	w.dispatchReadyLocked(ctx)
+	err := w.waitInflight(ctx)
+	_ = safeguard.Do(w.reportQueue, w.onPanic)
+	w.cancelOnce.Do(w.cancelBase)
+	return err
 }
 
 func (w *Worker[T]) acquireDispatch(ctx context.Context) bool {

@@ -97,6 +97,11 @@ func (c *Client) EmitRecord(_ context.Context, record Record) {
 		return
 	}
 	safeguard.Do(func() {
+		c.lifecycleMu.RLock()
+		defer c.lifecycleMu.RUnlock()
+		if c.closing {
+			return
+		}
 		if !record.Level.valid() {
 			record.Level = LevelInfo
 		}
@@ -124,11 +129,6 @@ func (c *Client) EmitRecord(_ context.Context, record Record) {
 			return
 		}
 
-		c.lifecycleMu.RLock()
-		defer c.lifecycleMu.RUnlock()
-		if c.closing {
-			return
-		}
 		c.metrics.IncCaptured()
 		dropped := c.ring.Push(current)
 		if dropped > 0 {
