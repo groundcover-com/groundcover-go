@@ -3,6 +3,8 @@ package groundcover
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/groundcover-com/groundcover-go/internal/safefmt"
 )
 
 // Attributes is a bag of custom, caller-supplied data attached to an event.
@@ -57,7 +59,7 @@ func sanitizeValue(v any, depth int) any {
 		return nil
 	}
 	if depth >= maxAttrDepth {
-		return fmt.Sprintf("%v", v)
+		return safefmt.String(v)
 	}
 	switch val := v.(type) {
 	case string, bool,
@@ -106,15 +108,16 @@ func sanitizeReflect(v any, depth int) any {
 	case reflect.Map:
 		out := make(map[string]any, rv.Len())
 		for _, key := range rv.MapKeys() {
-			out[fmt.Sprintf("%v", key.Interface())] = sanitizeValue(rv.MapIndex(key).Interface(), depth+1)
+			out[safefmt.String(key.Interface())] = sanitizeValue(rv.MapIndex(key).Interface(), depth+1)
 		}
 		return out
 	case reflect.Pointer:
 		if rv.IsNil() {
 			return nil
 		}
-		return sanitizeValue(rv.Elem().Interface(), depth)
+		// depth+1: a recursive pointer type would otherwise never reach the cap.
+		return sanitizeValue(rv.Elem().Interface(), depth+1)
 	default:
-		return fmt.Sprintf("%v", v)
+		return safefmt.String(v)
 	}
 }

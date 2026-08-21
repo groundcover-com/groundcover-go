@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+
+	"github.com/groundcover-com/groundcover-go/internal/safefmt"
 )
 
 // Attributes is a bag of structured fields attached to a log record.
@@ -40,7 +42,7 @@ func sanitizeValue(v any, depth int) any {
 		return nil
 	}
 	if depth >= maxAttrDepth {
-		return fmt.Sprintf("%v", v)
+		return safefmt.String(v)
 	}
 	switch value := v.(type) {
 	case string, bool,
@@ -96,7 +98,7 @@ func sanitizeReflect(v any, depth int) any {
 	case reflect.Map:
 		out := make(map[string]any, rv.Len())
 		for _, key := range rv.MapKeys() {
-			out[fmt.Sprintf("%v", key.Interface())] = sanitizeValue(rv.MapIndex(key).Interface(), depth+1)
+			out[safefmt.String(key.Interface())] = sanitizeValue(rv.MapIndex(key).Interface(), depth+1)
 		}
 		return out
 	case reflect.Pointer:
@@ -105,6 +107,6 @@ func sanitizeReflect(v any, depth int) any {
 		}
 		return sanitizeValue(rv.Elem().Interface(), depth+1)
 	default:
-		return fmt.Sprintf("%v", v)
+		return safefmt.String(v)
 	}
 }

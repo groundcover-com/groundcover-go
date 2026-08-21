@@ -157,6 +157,45 @@ func TestStandaloneSanitizesNonFiniteAndRejectsOversizedRecords(t *testing.T) {
 	}
 }
 
+// A cyclic attribute must not take the host process down, and the rest of the
+// record must still be delivered.
+func TestStandaloneCyclicAttributeIsDeliveredSafely(t *testing.T) {
+	var bodies [][]byte
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		mu.Lock()
+		bodies = append(bodies, body)
+		mu.Unlock()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := logs.New(logs.Config{DSN: server.URL, HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cyclic := map[string]any{"name": "root"}
+	cyclic["self"] = cyclic
+	client.Info(context.Background(), "cyclic", logs.Attributes{"loop": cyclic, "ok": "kept"})
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 1 {
+		t.Fatalf("requests = %d, want the record delivered", len(bodies))
+	}
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(bodies[0]), &record); err != nil {
+		t.Fatalf("decode record: %v", err)
+	}
+	if record["ok"] != "kept" {
+		t.Fatalf("healthy attribute missing: %#v", record)
+	}
+}
+
 // A BeforeSend callback that re-enters the client (a common accident when the
 // callback logs) must not deadlock against a concurrent Close.
 func TestStandaloneBeforeSendReentrancyDoesNotDeadlock(t *testing.T) {
