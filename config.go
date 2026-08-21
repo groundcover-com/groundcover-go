@@ -91,6 +91,10 @@ type Config struct {
 	// not observe dropped log records; those are counted in LogStats.
 	OnDrop func(n int)
 	// BeforeSend can scrub or sample an event; returning nil drops it.
+	//
+	// The returned event is handed to the delivery worker, so the callback
+	// must not keep a reference it mutates afterwards: return the event it was
+	// given, or a fresh one it does not retain.
 	BeforeSend func(*Event) *Event
 
 	// EnableLogs turns on the log signal: EmitLog / Log* calls (and bridges
@@ -104,7 +108,8 @@ type Config struct {
 	// to "go".
 	LogSource string
 	// BeforeSendLog can scrub or sample a log record; returning nil drops it.
-	// It runs before identity hashing, like BeforeSend.
+	// It runs before identity hashing, like BeforeSend, and the same ownership
+	// rule applies: do not retain and mutate the returned record.
 	BeforeSendLog func(*Log) *Log
 	// Hasher optionally pseudonymizes user.id / user.email via keyed HMAC.
 	Hasher IdentityHasher

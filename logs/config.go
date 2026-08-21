@@ -64,6 +64,10 @@ type Config struct {
 	RateLimitBackoff time.Duration
 
 	// BeforeSend can scrub or sample a record; returning nil drops it.
+	//
+	// The returned record is handed to the delivery worker, so the callback
+	// must not keep a reference it mutates afterwards: return the record it
+	// was given, or a fresh one it does not retain.
 	BeforeSend func(*Record) *Record
 	// Hasher pseudonymizes user.id and user.email.
 	Hasher IdentityHasher
