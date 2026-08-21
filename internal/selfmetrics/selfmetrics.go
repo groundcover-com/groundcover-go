@@ -18,6 +18,9 @@ const (
 	DropSendExhausted
 	// DropBeforeSend indicates an event was dropped by a BeforeSend callback.
 	DropBeforeSend
+	// DropShutdown indicates an event was refused because the client had
+	// started closing and nothing remained to deliver it.
+	DropShutdown
 )
 
 // Snapshot is an immutable copy of all counters at a point in time. Field names
@@ -28,6 +31,7 @@ type Snapshot struct {
 	DroppedOverflow    int64
 	DroppedSend        int64
 	DroppedBeforeSend  int64
+	DroppedShutdown    int64
 	Retries            int64
 	RateLimited        int64
 	PanicsRecovered    int64
@@ -45,6 +49,7 @@ type Metrics struct {
 	droppedOverflow    atomic.Int64
 	droppedSend        atomic.Int64
 	droppedBeforeSend  atomic.Int64
+	droppedShutdown    atomic.Int64
 	retries            atomic.Int64
 	rateLimited        atomic.Int64
 	panicsRecovered    atomic.Int64
@@ -72,6 +77,8 @@ func (m *Metrics) AddDropped(reason DropReason, n int64) {
 		m.droppedSend.Add(n)
 	case DropBeforeSend:
 		m.droppedBeforeSend.Add(n)
+	case DropShutdown:
+		m.droppedShutdown.Add(n)
 	}
 }
 
@@ -104,6 +111,7 @@ func (m *Metrics) Snapshot() Snapshot {
 		DroppedOverflow:    m.droppedOverflow.Load(),
 		DroppedSend:        m.droppedSend.Load(),
 		DroppedBeforeSend:  m.droppedBeforeSend.Load(),
+		DroppedShutdown:    m.droppedShutdown.Load(),
 		Retries:            m.retries.Load(),
 		RateLimited:        m.rateLimited.Load(),
 		PanicsRecovered:    m.panicsRecovered.Load(),
@@ -122,6 +130,7 @@ func (m *Metrics) Reset() {
 	m.droppedOverflow.Store(0)
 	m.droppedSend.Store(0)
 	m.droppedBeforeSend.Store(0)
+	m.droppedShutdown.Store(0)
 	m.retries.Store(0)
 	m.rateLimited.Store(0)
 	m.panicsRecovered.Store(0)

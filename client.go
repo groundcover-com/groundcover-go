@@ -2,10 +2,12 @@ package groundcover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/groundcover-com/groundcover-go/internal/safeguard"
 	"github.com/groundcover-com/groundcover-go/internal/selfmetrics"
 	"github.com/groundcover-com/groundcover-go/internal/transport"
+	gclogs "github.com/groundcover-com/groundcover-go/logs"
 )
 
 // eventType is the only event type emitted in v1 (error tracking).
@@ -36,6 +39,14 @@ type Client struct {
 
 	ring   *ringbuf.Buffer[*Event]
 	worker *transport.Worker[*Event]
+
+	logClient *gclogs.Client
+
+	// closing is set before Close drains, and lifecycleMu is held for reading
+	// only across the enqueue itself, so no event lands in the ring after the
+	// final drain.
+	closing     atomic.Bool
+	lifecycleMu sync.RWMutex
 
 	debug    bool
 	debugOut io.Writer
@@ -76,14 +87,18 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	c.debug = resolved.Debug
 	c.debugOut = os.Stderr
 
-	c.ring = ringbuf.New[*Event](resolved.MaxQueue, resolved.MaxBytes, estimateSize)
+	res := c.res
+	c.ring = ringbuf.New[*Event](resolved.MaxQueue, resolved.MaxBytes, func(event *Event) int {
+		return encodedEventSize(event, res)
+	})
 
-	if sender == nil {
+	eventSender := sender
+	if eventSender == nil {
 		client := resolved.HTTPClient
 		if client == nil {
 			client = &http.Client{Timeout: defaultHTTPTimeout}
 		}
-		sender = transport.NewHTTPSender(transport.HTTPConfig{
+		eventSender = transport.NewHTTPSender(transport.HTTPConfig{
 			Endpoint:     resolved.endpoint(),
 			IngestionKey: resolved.IngestionKey,
 			UserAgent:    c.res.userAgent,
@@ -91,21 +106,47 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 		})
 	}
 
-	res := c.res
 	encode := func(items []*Event) ([]byte, error) { return encodeBatch(items, res) }
 
+	workerCfg := transport.WorkerConfig{
+		BatchSize:        resolved.BatchSize,
+		MaxBatchBytes:    resolved.MaxBatchBytes,
+		FlushInterval:    resolved.FlushInterval,
+		MaxRetries:       resolved.MaxRetries,
+		RetryMax:         resolved.RetryMax,
+		RateLimitBackoff: resolved.RateLimitBackoff,
+	}
+
 	c.worker = transport.NewWorker[*Event](
-		c.ring, sender, encode, metricsObserver{m: c.metrics}, c.throttle, c.onPanic,
-		transport.WorkerConfig{
+		c.ring, eventSender, encode, metricsObserver{m: c.metrics}, c.throttle, c.onPanic, workerCfg,
+	)
+	c.worker.Start()
+
+	if resolved.EnableLogs {
+		logClient, err := gclogs.New(gclogs.Config{
+			DSN:              resolved.DSN,
+			IngestionKey:     firstNonEmpty(resolved.LogsIngestionKey, resolved.IngestionKey),
+			ServiceName:      c.res.serviceName,
+			Env:              c.res.env,
+			Cluster:          c.res.cluster,
+			Source:           resolved.LogSource,
+			MaxQueue:         resolved.MaxQueue,
+			MaxBytes:         resolved.MaxBytes,
 			BatchSize:        resolved.BatchSize,
-			MaxBatchBytes:    resolved.MaxBatchBytes,
 			FlushInterval:    resolved.FlushInterval,
+			MaxBatchBytes:    resolved.MaxBatchBytes,
 			MaxRetries:       resolved.MaxRetries,
 			RetryMax:         resolved.RetryMax,
 			RateLimitBackoff: resolved.RateLimitBackoff,
-		},
-	)
-	c.worker.Start()
+			BeforeSend:       adaptBeforeSendLog(resolved.BeforeSendLog, Service{Name: c.res.serviceName, Version: c.res.release}),
+			Hasher:           resolved.Hasher,
+			HTTPClient:       resolved.HTTPClient,
+		})
+		if err != nil {
+			return nil, err
+		}
+		c.logClient = logClient
+	}
 	return c, nil
 }
 
@@ -171,7 +212,9 @@ func (c *Client) Recover(ctx context.Context) {
 			// panic unwinding, but we still want a brief best-effort flush.
 			flushCtx, cancel := context.WithTimeout(context.Background(), panicFlushTimeout)
 			defer cancel()
-			_ = c.worker.Flush(flushCtx) //nolint:contextcheck // deliberate detached best-effort flush before re-raise
+			// Flush every signal: a log emitted just before the panic is as
+			// worth keeping as the panic event itself.
+			_ = c.Flush(flushCtx) //nolint:contextcheck // deliberate detached best-effort flush before re-raise
 		}, c.onPanic)
 	}
 	panic(r) // re-raise: we observe, never alter control flow
@@ -236,6 +279,12 @@ func (c *Client) newPanicEvent(recovered any) *Event {
 // finishAndEnqueue applies scope and options, pseudonymizes identity, computes
 // the fingerprint, runs BeforeSend, and enqueues the event.
 func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) {
+	// Nothing drains the pipeline after Close, so stop before doing the work
+	// and before running any user callback.
+	if c.closing.Load() {
+		c.metrics.AddDropped(selfmetrics.DropShutdown, 1)
+		return
+	}
 	cfg := c.config()
 
 	scopeFromContext(ctx).applyTo(e)
@@ -282,7 +331,6 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 		c.writeDebug(e)
 	}
 
-	c.metrics.IncCaptured()
 	c.enqueue(cfg, e)
 }
 
@@ -303,9 +351,25 @@ func (c *Client) runBeforeSend(fn func(*Event) *Event, e *Event) (out *Event) {
 	return out
 }
 
-// enqueue performs the bounded, non-blocking hand-off to the pipeline.
+// enqueue performs the bounded, non-blocking hand-off to the pipeline. Events
+// captured after Close are discarded rather than buffered with nothing left to
+// drain them.
 func (c *Client) enqueue(cfg *Config, e *Event) {
-	dropped := c.ring.Push(e)
+	eventBytes := encodedEventSize(e, c.res)
+	if eventBytes > cfg.MaxBytes || eventBytes > cfg.MaxBatchBytes {
+		c.metrics.AddDropped(selfmetrics.DropOverflow, 1)
+		c.fireOnDrop(cfg.OnDrop, 1)
+		return
+	}
+
+	c.lifecycleMu.RLock()
+	defer c.lifecycleMu.RUnlock()
+	if c.closing.Load() {
+		c.metrics.AddDropped(selfmetrics.DropShutdown, 1)
+		return
+	}
+	c.metrics.IncCaptured()
+	dropped := c.ring.PushSized(e, eventBytes)
 	if dropped > 0 {
 		c.metrics.AddDropped(selfmetrics.DropOverflow, int64(dropped))
 		c.fireOnDrop(cfg.OnDrop, dropped)
@@ -349,20 +413,46 @@ func (c *Client) WithIsolatedScope(ctx context.Context) context.Context {
 	return isolatedScopeContext(ctx)
 }
 
-// Flush blocks until pending events are delivered or ctx expires.
+// Flush blocks until pending events and logs are delivered or ctx expires.
 func (c *Client) Flush(ctx context.Context) error {
 	if c.disabled {
 		return nil
 	}
-	return c.worker.Flush(ctx)
+	if c.logClient == nil {
+		return c.worker.Flush(ctx)
+	}
+	return joinConcurrent(func() error { return c.worker.Flush(ctx) }, func() error { return c.logClient.Flush(ctx) })
 }
 
 // Close flushes and stops the client. It is idempotent and bounded by ctx.
+// Captures made after it starts are discarded.
 func (c *Client) Close(ctx context.Context) error {
 	if c.disabled {
 		return nil
 	}
-	return c.worker.Close(ctx)
+	c.closing.Store(true)
+	// Let any capture that already passed the check finish enqueueing, so it is
+	// included in the final drain.
+	c.lifecycleMu.Lock()
+	c.lifecycleMu.Unlock() //nolint:staticcheck // lock/unlock is the barrier itself
+	if c.logClient == nil {
+		return c.worker.Close(ctx)
+	}
+	return joinConcurrent(func() error { return c.worker.Close(ctx) }, func() error { return c.logClient.Close(ctx) })
+}
+
+func joinConcurrent(left, right func() error) error {
+	results := make(chan error, 2)
+	run := func(fn func() error) {
+		var err error
+		if ok := safeguard.Do(func() { err = fn() }, nil); !ok {
+			err = errors.New("internal panic during shutdown")
+		}
+		results <- err
+	}
+	go run(left)
+	go run(right)
+	return errors.Join(<-results, <-results)
 }
 
 // FlushTimeout is convenience sugar for Flush with a fresh context bounded by d.

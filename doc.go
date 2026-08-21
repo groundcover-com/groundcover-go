@@ -31,6 +31,36 @@
 // endpoint in v1 is an implementation detail that may change without affecting
 // callers (the SDK owns the path).
 //
+// # Logs
+//
+// The SDK can also deliver application logs directly to groundcover — no
+// agent, sidecar, or file tailer. The log signal is opt-in via
+// Config.EnableLogs and travels on its own bounded pipeline so log volume
+// never evicts or delays error events:
+//
+//	_ = groundcover.Init(groundcover.Config{DSN: dsn, IngestionKey: key, EnableLogs: true})
+//	groundcover.LogInfo(ctx, "order created", groundcover.Attributes{"order_id": id})
+//	groundcover.LogErrorf(ctx, "charge %s failed", chargeID)
+//
+// Programs that need only log delivery can use the standalone client in the
+// logs subpackage instead of this aggregate SDK; it owns its own queue,
+// delivery, statistics, and shutdown. EnableLogs composes that same standalone
+// client behind the root convenience API. The gcslog subpackage bridges the
+// standard library's log/slog onto either client, and bridges for third-party
+// logging libraries live in nested modules under contrib/. Records inherit
+// identity and attributes from the context scope, can be scrubbed or sampled
+// with Config.BeforeSendLog, and are observable via Client.LogStats /
+// GlobalLogStats.
+//
+// # Metrics
+//
+// The standalone metrics subpackage pushes Prometheus metrics directly to
+// groundcover — no agent, sidecar, or scrape endpoint. It provides a
+// thread-safe registry of gauges, counters, and histograms, collects Go
+// runtime and process metrics by default, and runs a panic-guarded background
+// worker that pushes on a fixed interval. It is stdlib-only and independent of
+// error tracking.
+//
 // # Instrumenting an existing service
 //
 // A step-by-step playbook (for humans and AI coding agents) lives in

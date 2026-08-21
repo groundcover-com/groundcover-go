@@ -293,6 +293,89 @@ groundcover.CaptureMessage(ctx, "falling back to stale cache", groundcover.Level
 
 Levels: `LevelDebug`, `LevelInfo`, `LevelWarning`, `LevelError`, `LevelFatal`.
 
+## 6b. Application logs (opt-in, no agent or tailer)
+
+If the program only needs logs, use the standalone public client; it owns its
+own queue, delivery, statistics, and shutdown without initializing error
+tracking:
+
+```go
+client, err := logs.New(logs.Config{
+	DSN: dsn, IngestionKey: logsKey,
+	ServiceName: "checkout", Env: "production", Cluster: "cluster-a",
+})
+defer client.CloseTimeout(5 * time.Second)
+client.Info(ctx, "order created", logs.Attributes{"order_id": id})
+```
+
+Import it from `github.com/groundcover-com/groundcover-go/logs`.
+
+Set `EnableLogs: true` in the config to deliver application logs directly to
+groundcover. Logs travel on their own bounded queue, so log volume never evicts
+error events. Set `LogsIngestionKey` when `/json/logs` uses a different key
+from the error/RUM intake; otherwise it falls back to `IngestionKey`. Configure
+the per-record `service`, `env`, `cluster`, and `source` fields with
+`ServiceName`, `Env`, `Cluster`, and `LogSource` (`"go"` by default). Two ways
+to emit:
+
+```go
+// Direct emission API — for new call sites:
+groundcover.LogInfo(ctx, "order created", groundcover.Attributes{"order_id": id})
+groundcover.LogErrorf(ctx, "charge %s failed", chargeID)
+
+// slog bridge — existing slog call sites work unchanged:
+logger := slog.New(gcslog.NewHandler(gcslog.Options{}))
+logger.Info("order created", "order_id", "o-9")
+```
+
+The bridge import path is `github.com/groundcover-com/groundcover-go/gcslog`
+(stdlib-only, part of the core module). Leave `Options.Client` nil so records
+go through the aggregate client and inherit identity/attributes from the
+context scope, exactly like error events. A standalone `logs.Client` has no
+error-tracking scope. Scrub or sample records with `BeforeSendLog` (the
+log-signal counterpart of `BeforeSend`); identity hashing via `Hasher`
+applies to logs too. Always pass the request context (`InfoContext`) so
+scope enrichment carries over.
+
+## 6c. Metrics (push, no agent or scrape endpoint)
+
+If the program needs metrics, use the standalone push client from
+`github.com/groundcover-com/groundcover-go/metrics` (stdlib-only, part of the
+core module). It renders Prometheus text format and POSTs it to groundcover
+on a fixed interval; nothing scrapes the process:
+
+```go
+reg := metrics.NewRegistry()
+client, err := metrics.New(metrics.Config{
+	DSN: dsn, IngestionKey: metricsKey, // needs a metrics-capable key, not a RUM key
+	Job: "checkout",                    // defaults to OTEL_SERVICE_NAME / GC_SERVICE_NAME
+}, reg)
+stop, err := client.Start(ctx) // immediate first push, then every 30s
+defer stop(context.Background()) // also flushes the final samples
+
+reg.Counter("orders_created_total", nil).Inc()
+reg.Gauge("queue_depth", nil).Set(float64(depth))
+reg.Histogram("request_seconds", nil, nil).Observe(elapsed.Seconds())
+```
+
+Go runtime and process metrics (`go_goroutines`, `go_memstats_*`,
+`process_cpu_seconds_total`, cgroup-aware CPU/memory limits, ...) are
+collected by default; set `DisableRuntimeMetrics: true` to opt out. Every
+sample gets `job`, `instance` (hostname by default), and any `ExtraLabels`
+injected. Instrument lookups are get-or-create and never panic, but they take
+the registry lock and build a label signature, so keep an instrument in a
+variable on a hot path rather than looking it up per event. Push failures
+surface through `OnError` and `Stats()` and never stop the worker.
+
+Additional `MetricSource` producers can be pushed next to the registry; wrap
+them with `metrics.Named("name", src)` so errors and stats name the source.
+Panicking and malformed sources are isolated (partial pushes are counted in
+`Stats()`); custom sources must return promptly because rendering is
+synchronous. Duplicate series across sources keep the first occurrence
+(`FailOnDuplicateSeries: true` makes them hard errors during migrations).
+`Config.Endpoint` can override the full push URL for custom gateways instead
+of `DSN`.
+
 ## 7. Scrub PII / secrets (when handling sensitive data)
 
 `BeforeSend` is the single chokepoint. Return `nil` to drop an event; mutate and

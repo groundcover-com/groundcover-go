@@ -11,8 +11,9 @@ The official [groundcover](https://groundcover.com) error tracking library for G
 [![Go Version](https://img.shields.io/github/go-mod/go-version/groundcover-com/groundcover-go)](go.mod)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **v1 scope: error tracking.** Tracing, profiling, logs, and metrics producers
-> are planned on top of the same shared core.
+> **Scope: error tracking, plus direct log delivery (opt-in) and a standalone
+> metrics push client.** Tracing and profiling producers are planned on top of
+> the same shared core.
 
 `groundcover-go` captures application errors and panics and ships them to
 groundcover with a strong safety guarantee: **the library never affects the host
@@ -67,6 +68,156 @@ func main() {
   key shows up as *no data* rather than an exception. It is optional **only** when
   `DSN` points at a local in-cluster sensor (which needs no auth).
 
+### Logs — no agent, no tailer
+
+Use the public `logs` package when the program needs only log delivery:
+
+```go
+import "github.com/groundcover-com/groundcover-go/logs"
+
+client, err := logs.New(logs.Config{
+	DSN:          dsn,
+	IngestionKey: logsKey,
+	ServiceName:  "checkout",
+	Env:          "production",
+	Cluster:      "cluster-a",
+})
+if err != nil {
+	return err
+}
+defer client.CloseTimeout(5 * time.Second)
+
+client.Info(ctx, "order created", logs.Attributes{"order_id": "o-9"})
+```
+
+`logs.Client` independently owns its queue, batching, retries, statistics, and
+shutdown. It does not initialize error tracking or any other signal.
+
+For programs already using the aggregate SDK, `EnableLogs: true` composes the
+same standalone client behind the root convenience API:
+
+With `EnableLogs: true`, the SDK delivers application logs straight to
+groundcover's dedicated `/json/logs` intake as NDJSON — no local agent or
+tailer. Logs travel on their **own bounded queue**, so log volume never evicts
+or delays error events.
+
+```go
+groundcover.Config{
+	EnableLogs:       true,
+	LogsIngestionKey: "<logs-ingestion-key>", // omit when IngestionKey works for both intakes
+	LogSource:        "my-source",             // defaults to "go"
+}
+```
+
+Each NDJSON record includes `service`, `env`, `cluster`, and `source`, populated
+from `ServiceName`, `Env`, `Cluster`, and `LogSource`. It also uses an RFC 3339
+Nano `timestamp`, `msg`, and `level`; all other fields are retained as log
+attributes. Resource metadata is deliberately per-record rather than encoded
+in HTTP headers.
+
+The intake extracts the message from `message`/`msg`/`log`/`body`/`content`/
+`text` and the timestamp from `timestamp`/`time`/`ts`, so an attribute under one
+of those names — or under a key the SDK writes, such as `level` or `user.id` —
+is delivered under an `attributes.` prefix rather than overwriting the record's
+own message, time, or identity. If that destination already exists, the SDK
+prefixes again until both values have distinct keys.
+
+There are two layers, by design:
+
+1. **The emission API** — push a log record (and, later, other signals)
+   directly from code. This is also what auto-collection and third-party
+   integrations build on:
+
+```go
+groundcover.LogInfo(ctx, "order created", groundcover.Attributes{"order_id": id})
+groundcover.LogErrorf(ctx, "charge %s failed after %d tries", chargeID, tries)
+```
+
+2. **Bridges** — adapters from existing logging libraries onto the emission
+   API, Sentry-style. The stdlib `log/slog` bridge ships in core (zero extra
+   dependencies); bridges for third-party loggers (logrus, zap, ...) will live
+   in `contrib/` nested modules:
+
+```go
+import "github.com/groundcover-com/groundcover-go/gcslog"
+
+logger := slog.New(gcslog.NewHandler(gcslog.Options{})) // uses the Init'd client
+logger.Info("order created", "order_id", "o-9")         // delivered to groundcover
+```
+
+With a standalone client, pass it explicitly:
+
+```go
+logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client}))
+```
+
+Records inherit identity/attributes from the request scope (`SetUser` /
+`WithScope`) when emitted through the aggregate client (`Init` / `LogInfo`
+/ a handler with nil `Options.Client`). A standalone `logs.Client` has no
+error-tracking scope. Bridges that carry their own timestamp emit through
+`EmitLogRecord`, which keeps the record's original time instead of the time it
+reached the SDK. Records can be scrubbed or sampled with
+`BeforeSendLog`, and are observable via `LogStats()` and the Prometheus
+bridge (`groundcover_sdk_logs_*`).
+
+### Metrics — push without an agent
+
+Use the public `metrics` package when the program should ship its own metrics
+to groundcover — no agent, sidecar, or scrape endpoint. The client renders
+Prometheus text format and pushes it on a fixed interval:
+
+```go
+import "github.com/groundcover-com/groundcover-go/metrics"
+
+reg := metrics.NewRegistry()
+client, err := metrics.New(metrics.Config{
+	DSN:          dsn,
+	IngestionKey: metricsKey,
+	Job:          "checkout",
+}, reg)
+if err != nil {
+	return err
+}
+stop, err := client.Start(ctx) // immediate first push, then every 30s
+if err != nil {
+	return err
+}
+defer stop(context.Background()) // also flushes the final samples
+
+reg.Counter("orders_created_total", nil).Inc()
+reg.Gauge("queue_depth", nil).Set(17)
+reg.Histogram("request_seconds", nil, nil).Observe(0.042)
+```
+
+- **Runtime metrics are on by default** — `go_goroutines`, `go_memstats_*`,
+  `go_gc_duration_seconds`, and (on Linux) `process_*` including cgroup-aware
+  `process_cpu_cores_available` / `process_memory_limit_bytes`. Opt out with
+  `DisableRuntimeMetrics: true`.
+- Every sample gets `job` (defaults to `OTEL_SERVICE_NAME`/`GC_SERVICE_NAME`),
+  `instance` (defaults to the hostname), and any configured `ExtraLabels`.
+  Any `MetricSource` (anything that can write Prometheus text format) can be
+  plugged in next to the built-in `Registry`; wrap it with
+  `metrics.Named("application", src)` to attribute its errors and stats.
+- Sources are isolated: a panicking or malformed source is reported through
+  `Push`'s aggregate error (`errors.Join`, child errors name the source)
+  while healthy sources are still delivered — a *partial push* in `Stats()`.
+- Duplicate final series across sources (same name and label set after label
+  injection) keep the first occurrence and drop the rest, reported as a typed
+  `*DuplicateSeriesError`; set `FailOnDuplicateSeries: true` to make
+  duplicates fail the whole push during pipeline migrations.
+- Payloads are bounded by documented limits (`MaxSeries` 10000,
+  `MaxBodyBytes` 8MiB, per-label caps); exceeding one fails that push with a
+  typed error and the worker keeps running. Failures surface via `OnError`
+  and the credential-free `Stats()` (push/partial/failure counters, malformed
+  lines, duplicates, label overrides, last attempt/success/error, worker
+  state). `Push` is synchronous; `Start` runs periodic pushes in the
+  background. Custom `MetricSource` implementations must return promptly.
+- Advanced: `Config.Endpoint` overrides the full push URL for on-prem or
+  custom gateways (mutually exclusive with `DSN`). The default HTTP transport
+  is untouched, so proxy environment variables are honored.
+- The ingestion key must be metrics-capable: RUM-type keys are rejected by
+  the metrics intake.
+
 ### Web frameworks
 
 Middleware is provided for net/http and every framework in the
@@ -119,6 +270,9 @@ for wiring details, including middleware ordering.
 | Module | Import path | Adds |
 | ------ | ----------- | ---- |
 | net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` | stdlib only (part of core) |
+| slog bridge (logs) | `github.com/groundcover-com/groundcover-go/gcslog` | stdlib only (part of core) |
+| standalone logs client | `github.com/groundcover-com/groundcover-go/logs` | stdlib only (part of core) |
+| standalone metrics push client | `github.com/groundcover-com/groundcover-go/metrics` | stdlib only (part of core) |
 | Echo middleware | `github.com/groundcover-com/groundcover-go/contrib/echo` | `github.com/labstack/echo/v4` |
 | FastHTTP middleware | `github.com/groundcover-com/groundcover-go/contrib/fasthttp` | `github.com/valyala/fasthttp` |
 | Fiber middleware | `github.com/groundcover-com/groundcover-go/contrib/fiber` | `github.com/gofiber/fiber/v2` |

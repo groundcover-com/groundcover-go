@@ -89,6 +89,65 @@ func CaptureRecovered(ctx context.Context, recovered any, opts ...Option) {
 	currentGlobal().CaptureRecovered(ctx, recovered, opts...)
 }
 
+// EmitLog emits a log record using the package-level client. See Client.EmitLog.
+func EmitLog(ctx context.Context, level Level, msg string, attrs ...Attributes) {
+	currentGlobal().EmitLog(ctx, level, msg, attrs...)
+}
+
+// EmitLogRecord emits a pre-built log record using the package-level client.
+// See Client.EmitLogRecord.
+func EmitLogRecord(ctx context.Context, record Log) {
+	currentGlobal().EmitLogRecord(ctx, record)
+}
+
+// LogDebug emits a debug-level log record using the package-level client.
+func LogDebug(ctx context.Context, msg string, attrs ...Attributes) {
+	currentGlobal().LogDebug(ctx, msg, attrs...)
+}
+
+// LogInfo emits an info-level log record using the package-level client.
+func LogInfo(ctx context.Context, msg string, attrs ...Attributes) {
+	currentGlobal().LogInfo(ctx, msg, attrs...)
+}
+
+// LogWarn emits a warning-level log record using the package-level client.
+func LogWarn(ctx context.Context, msg string, attrs ...Attributes) {
+	currentGlobal().LogWarn(ctx, msg, attrs...)
+}
+
+// LogError emits an error-level log record using the package-level client.
+func LogError(ctx context.Context, msg string, attrs ...Attributes) {
+	currentGlobal().LogError(ctx, msg, attrs...)
+}
+
+// LogDebugf emits a debug-level log record with fmt.Sprintf formatting, using
+// the package-level client.
+func LogDebugf(ctx context.Context, format string, args ...any) {
+	currentGlobal().LogDebugf(ctx, format, args...)
+}
+
+// LogInfof emits an info-level log record with fmt.Sprintf formatting, using
+// the package-level client.
+func LogInfof(ctx context.Context, format string, args ...any) {
+	currentGlobal().LogInfof(ctx, format, args...)
+}
+
+// LogWarnf emits a warning-level log record with fmt.Sprintf formatting, using
+// the package-level client.
+func LogWarnf(ctx context.Context, format string, args ...any) {
+	currentGlobal().LogWarnf(ctx, format, args...)
+}
+
+// LogErrorf emits an error-level log record with fmt.Sprintf formatting, using
+// the package-level client.
+func LogErrorf(ctx context.Context, format string, args ...any) {
+	currentGlobal().LogErrorf(ctx, format, args...)
+}
+
+// GlobalLogStats returns the package-level client's log pipeline self-metrics
+// snapshot. (The per-client accessor is the Client.LogStats method.)
+func GlobalLogStats() Stats { return currentGlobal().LogStats() }
+
 // SetUser returns a context with the identity set, using the package-level client.
 func SetUser(ctx context.Context, u User) context.Context {
 	return currentGlobal().SetUser(ctx, u)

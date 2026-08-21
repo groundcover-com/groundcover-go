@@ -2,9 +2,12 @@ package groundcover
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/groundcover-com/groundcover-go/internal/endpoint"
 )
 
 // Default configuration values.
@@ -46,6 +49,10 @@ type Config struct {
 	// site). It is optional ONLY when DSN points at a local in-cluster sensor,
 	// which needs no auth. Use a RUM-type ingestion key.
 	IngestionKey string
+	// LogsIngestionKey is the write key for /json/logs. It is required when
+	// the logs intake uses a different key from the RUM/error intake. When
+	// empty, IngestionKey is used for both.
+	LogsIngestionKey string
 
 	// ServiceName sets the service identity (OpenTelemetry service.name; the
 	// "service" in Datadog/OTel terms). Auto-detected from OTEL_SERVICE_NAME /
@@ -54,6 +61,9 @@ type Config struct {
 	ServiceName string
 	// Env overrides deployment.environment.name (env: GC_ENV / DEPLOYMENT_ENVIRONMENT).
 	Env string
+	// Cluster overrides the cluster field written to each log record (env:
+	// GC_CLUSTER / CLUSTER_NAME / K8S_CLUSTER_NAME).
+	Cluster string
 	// Release overrides service.version (env: GC_RELEASE).
 	Release string
 
@@ -71,15 +81,36 @@ type Config struct {
 	MaxRetries int
 	// RetryMax caps exponential backoff (default 30s).
 	RetryMax time.Duration
-	// RateLimitBackoff is the minimum 429 backoff (default 30s).
+	// RateLimitBackoff is the minimum 429 backoff (default 30s). A longer
+	// server-supplied Retry-After is honoured up to RetryMax.
 	RateLimitBackoff time.Duration
 	// StackDepthMax caps captured stack frames (default 128).
 	StackDepthMax int
 
-	// OnDrop observes dropped events (also recorded as a self-metric).
+	// OnDrop observes dropped events (also recorded as a self-metric). It does
+	// not observe dropped log records; those are counted in LogStats.
 	OnDrop func(n int)
 	// BeforeSend can scrub or sample an event; returning nil drops it.
+	//
+	// The returned event is handed to the delivery worker, so the callback
+	// must not keep a reference it mutates afterwards: return the event it was
+	// given, or a fresh one it does not retain.
 	BeforeSend func(*Event) *Event
+
+	// EnableLogs turns on the log signal: EmitLog / Log* calls (and bridges
+	// such as gcslog) capture records and deliver them directly to
+	// groundcover, with no agent or file tailer. Off by default; when false
+	// all log APIs are no-ops. Logs travel on their own bounded pipeline
+	// (sized by the same MaxQueue/MaxBytes/BatchSize knobs) so log volume
+	// never evicts or delays error events.
+	EnableLogs bool
+	// LogSource sets the source field written to each log record. It defaults
+	// to "go".
+	LogSource string
+	// BeforeSendLog can scrub or sample a log record; returning nil drops it.
+	// It runs before identity hashing, like BeforeSend, and the same ownership
+	// rule applies: do not retain and mutate the returned record.
+	BeforeSendLog func(*Log) *Log
 	// Hasher optionally pseudonymizes user.id / user.email via keyed HMAC.
 	Hasher IdentityHasher
 	// Logger receives throttled SDK-internal logs.
@@ -98,6 +129,9 @@ type Config struct {
 
 // withDefaults returns a copy of cfg with zero fields replaced by defaults.
 func (c Config) withDefaults() Config {
+	if c.LogSource == "" {
+		c.LogSource = "go"
+	}
 	if c.MaxQueue <= 0 {
 		c.MaxQueue = defaultMaxQueue
 	}
@@ -138,15 +172,16 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.DSN) == "" {
 		return ErrMissingDSN
 	}
+	// Catch a DSN no request can be built from here, at construction, rather
+	// than as a delivery failure repeating for the life of the process.
+	if err := endpoint.ValidateDSN(c.DSN); err != nil {
+		return fmt.Errorf("groundcover: %w", err)
+	}
 	return nil
 }
 
 // endpoint returns the fully-qualified ingestion URL (DSN + ingestPath), adding
 // a default https scheme when the DSN omits one.
 func (c Config) endpoint() string {
-	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
-	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
-		dsn = "https://" + dsn
-	}
-	return dsn + ingestPath
+	return endpoint.Resolve(c.DSN, ingestPath)
 }

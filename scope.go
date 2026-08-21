@@ -129,6 +129,32 @@ func (s *Scope) applyTo(e *Event) {
 	}
 }
 
+// applyToLog merges the scope into a log record. Identity, attributes, and
+// session identifiers carry over; the scope level does not (a log's level is
+// always the caller's explicit choice), and fingerprints do not apply to logs.
+func (s *Scope) applyToLog(l *Log) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.user.isZero() {
+		l.User = s.user
+	}
+	if len(s.attributes) > 0 {
+		merged := make(Attributes, len(s.attributes)+len(l.Attributes))
+		merged.merge(s.attributes)
+		merged.merge(l.Attributes) // per-call attributes win on key conflicts
+		l.Attributes = merged
+	}
+	if s.sessionID != "" {
+		l.SessionID = s.sessionID
+	}
+	if s.anonymousID != "" {
+		l.AnonymousID = s.anonymousID
+	}
+}
+
 // scopeKey is the context key type for the request scope.
 type scopeKey struct{}
 

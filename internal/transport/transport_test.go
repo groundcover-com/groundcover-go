@@ -113,6 +113,38 @@ func TestHTTPSenderNetworkError(t *testing.T) {
 	}
 }
 
+func TestHTTPSenderRefusesCredentialRedirect(t *testing.T) {
+	var receivedAuth atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth.Store(r.Header.Get("Authorization") != "")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	callerClient := origin.Client()
+	if callerClient.CheckRedirect != nil {
+		t.Fatal("test client unexpectedly has a redirect policy")
+	}
+	sender := transport.NewHTTPSender(transport.HTTPConfig{
+		Endpoint:     origin.URL,
+		IngestionKey: "write-secret",
+		Client:       callerClient,
+	})
+	if err := sender.Send(context.Background(), []byte(`{}`)); err == nil {
+		t.Fatal("Send unexpectedly followed a cross-origin redirect")
+	}
+	if receivedAuth.Load() {
+		t.Fatal("redirect target received the ingestion credential")
+	}
+	if callerClient.CheckRedirect != nil {
+		t.Fatal("NewHTTPSender mutated the caller-owned HTTP client")
+	}
+}
+
 func TestWorkerBatchingAndFlush(t *testing.T) {
 	sender := &testutil.MockSender{}
 	obs := &countObserver{}
@@ -203,6 +235,71 @@ func TestWorker429UsesRateLimitBackoff(t *testing.T) {
 	defer mu.Unlock()
 	if len(sleeps) != 1 || sleeps[0] != 30*time.Second {
 		t.Fatalf("expected one 30s backoff (max of RateLimitBackoff, RetryAfter), got %v", sleeps)
+	}
+}
+
+// An intake that asks for an implausibly long wait must not pin a sender for
+// that long; the configured ceiling wins.
+func TestWorkerClampsRetryAfter(t *testing.T) {
+	var sleeps []time.Duration
+	var mu sync.Mutex
+	calls := atomic.Int64{}
+	sender := &testutil.MockSender{Responder: func(_ int, _ []byte) error {
+		if calls.Add(1) == 1 {
+			return &transport.SendError{StatusCode: 429, RateLimited: true, Retryable: true, RetryAfter: 24 * time.Hour}
+		}
+		return nil
+	}}
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{
+		BatchSize:        10,
+		MaxRetries:       3,
+		RetryMax:         20 * time.Second,
+		RateLimitBackoff: 5 * time.Second,
+		Sleep:            func(_ context.Context, d time.Duration) { mu.Lock(); sleeps = append(sleeps, d); mu.Unlock() },
+	})
+	w.Start()
+	defer func() { _ = w.Close(context.Background()) }()
+
+	ring.Push(1)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sleeps) != 1 || sleeps[0] != 20*time.Second {
+		t.Fatalf("backoff = %v, want it clamped to RetryMax", sleeps)
+	}
+}
+
+// A caller who configures a rate-limit backoff longer than RetryMax means it.
+func TestWorkerHonorsConfiguredRateLimitBackoffAboveRetryMax(t *testing.T) {
+	var sleeps []time.Duration
+	var mu sync.Mutex
+	calls := atomic.Int64{}
+	sender := &testutil.MockSender{Responder: func(_ int, _ []byte) error {
+		if calls.Add(1) == 1 {
+			return &transport.SendError{StatusCode: 429, RateLimited: true, Retryable: true, RetryAfter: time.Hour}
+		}
+		return nil
+	}}
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{
+		BatchSize:        10,
+		MaxRetries:       3,
+		RetryMax:         5 * time.Second,
+		RateLimitBackoff: 90 * time.Second,
+		Sleep:            func(_ context.Context, d time.Duration) { mu.Lock(); sleeps = append(sleeps, d); mu.Unlock() },
+	})
+	w.Start()
+	defer func() { _ = w.Close(context.Background()) }()
+
+	ring.Push(1)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sleeps) != 1 || sleeps[0] != 90*time.Second {
+		t.Fatalf("backoff = %v, want the configured RateLimitBackoff", sleeps)
 	}
 }
 
@@ -411,5 +508,130 @@ func TestWorkerCloseIdempotent(t *testing.T) {
 	}
 	if ring.Len() != 0 {
 		t.Fatalf("close should drain remaining items, got %d", ring.Len())
+	}
+}
+
+func TestWorkerCloseTimesOutWhileFlushHoldsGate(t *testing.T) {
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	sender := &testutil.MockSender{
+		Responder: func(int, []byte) error {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+			<-unblock
+			return nil
+		},
+	}
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{BatchSize: 1})
+	w.Start()
+	ring.Push(1)
+
+	flushErr := make(chan error, 1)
+	go func() { flushErr <- w.Flush(context.Background()) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Flush did not start a send")
+	}
+
+	ring.Push(2)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := w.Close(ctx); err == nil {
+		t.Fatal("Close should time out while Flush holds the drain gate")
+	}
+	if ring.Len() == 0 {
+		t.Fatal("timed-out Close must not drop the retryable drain")
+	}
+
+	close(unblock)
+	if err := <-flushErr; err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	if ring.Len() != 0 {
+		t.Fatalf("retry Close should drain remaining items, got %d", ring.Len())
+	}
+}
+
+// A flush deadline bounds how long the caller waits, not whether the batch is
+// delivered: a short flush against a slow intake must not discard anything.
+func TestShortFlushDeadlineDoesNotDiscardBatches(t *testing.T) {
+	release := make(chan struct{})
+	sender := &testutil.MockSender{
+		Responder: func(int, []byte) error {
+			<-release
+			return nil
+		},
+	}
+	obs := &countObserver{}
+	w, ring := newWorker(t, sender, obs, transport.WorkerConfig{BatchSize: 5})
+	w.Start()
+
+	for i := range 5 {
+		ring.Push(i)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := w.Flush(ctx); err == nil {
+		t.Fatal("Flush should report its deadline expiring while the send is in flight")
+	}
+	if got := obs.exhausted.Load(); got != 0 {
+		t.Fatalf("flush deadline discarded %d items", got)
+	}
+
+	close(release)
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := obs.sent.Load(); got != 5 {
+		t.Fatalf("sent = %d, want the in-flight batch to complete", got)
+	}
+	if got := obs.exhausted.Load(); got != 0 {
+		t.Fatalf("exhausted = %d, want 0", got)
+	}
+}
+
+// When no send slot frees up before the caller's deadline, the popped batch goes
+// back on the queue rather than being dropped.
+func TestUndispatchableBatchIsRequeued(t *testing.T) {
+	release := make(chan struct{})
+	sender := &testutil.MockSender{
+		Responder: func(int, []byte) error {
+			<-release
+			return nil
+		},
+	}
+	obs := &countObserver{}
+	// One concurrent send, so the second batch cannot be handed off.
+	w, ring := newWorker(t, sender, obs, transport.WorkerConfig{BatchSize: 1, MaxConcurrent: 1})
+	w.Start()
+
+	ring.Push(1)
+	ring.Push(2)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := w.Flush(ctx); err == nil {
+		t.Fatal("Flush should report its deadline expiring")
+	}
+	if got := ring.Len(); got != 1 {
+		t.Fatalf("queued = %d, want the undispatched batch requeued", got)
+	}
+	if got := obs.exhausted.Load(); got != 0 {
+		t.Fatalf("exhausted = %d, want 0", got)
+	}
+
+	close(release)
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := obs.sent.Load(); got != 2 {
+		t.Fatalf("sent = %d, want both batches delivered", got)
 	}
 }

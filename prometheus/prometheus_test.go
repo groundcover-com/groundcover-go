@@ -31,6 +31,16 @@ func TestCollectorExposesMetrics(t *testing.T) {
 		"groundcover_sdk_panics_recovered_total",
 		`groundcover_sdk_queue_pending{unit="items"}`,
 		`groundcover_sdk_queue_pending{unit="bytes"}`,
+		"groundcover_sdk_logs_captured_total",
+		"groundcover_sdk_logs_sent_total",
+		`groundcover_sdk_logs_dropped_total{reason="overflow"}`,
+		`groundcover_sdk_logs_dropped_total{reason="before_send"}`,
+		`groundcover_sdk_dropped_total{reason="shutdown"}`,
+		`groundcover_sdk_logs_dropped_total{reason="shutdown"}`,
+		"groundcover_sdk_logs_retries_total",
+		"groundcover_sdk_logs_panics_recovered_total",
+		"groundcover_sdk_logs_subsystems_disabled_total",
+		`groundcover_sdk_logs_queue_pending{unit="items"}`,
 	}
 	for _, w := range want {
 		if !strings.Contains(out, w) {

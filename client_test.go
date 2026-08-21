@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"math"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,12 +17,35 @@ import (
 func mustClient(t *testing.T, cfg Config, sender *testutil.MockSender) *Client {
 	t.Helper()
 	cfg.DSN = "https://example.invalid"
+	if cfg.EnableLogs && cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			if err := sender.Send(req.Context(), body); err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(http.NoBody),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		})}
+	}
 	c, err := newClient(cfg, sender)
 	if err != nil {
 		t.Fatalf("newClient: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close(context.Background()) })
 	return c
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 // decodePayload unmarshals the single batch body the mock sender received.
@@ -85,6 +112,62 @@ func TestCaptureErrorRoundTrip(t *testing.T) {
 	}
 	if c.Stats().Sent != 1 {
 		t.Fatalf("expected 1 sent, stats=%+v", c.Stats())
+	}
+}
+
+func TestNonFiniteAttributeDoesNotPoisonEventBatch(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{BatchSize: 10, FlushInterval: time.Hour}, sender)
+
+	c.CaptureMessage(context.Background(), "non-finite", LevelInfo,
+		WithAttributes(Attributes{"ratio": math.NaN(), "limit": math.Inf(1)}))
+	c.CaptureMessage(context.Background(), "healthy", LevelInfo)
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	payload := decodePayload(t, sender)
+	if len(payload.Events) != 2 {
+		t.Fatalf("sent %d events, want both records", len(payload.Events))
+	}
+	metadata := payload.Events[0].Attributes.ErrorMetadata
+	if metadata["ratio"] != "NaN" || metadata["limit"] != "+Inf" {
+		t.Fatalf("non-finite attributes = ratio:%v limit:%v, want strings", metadata["ratio"], metadata["limit"])
+	}
+	if stats := c.Stats(); stats.Sent != 2 || stats.DroppedSendExhausted != 0 {
+		t.Fatalf("Stats = %+v, want both events sent without a batch drop", stats)
+	}
+}
+
+func TestEventLargerThanBatchLimitIsRejectedBeforeQueue(t *testing.T) {
+	sender := &testutil.MockSender{}
+	var dropped int
+	c := mustClient(t, Config{
+		MaxBytes:      1 << 20,
+		MaxBatchBytes: 4 << 10,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+		OnDrop:        func(n int) { dropped += n },
+	}, sender)
+
+	// NUL expands to six bytes in JSON. The old raw-byte estimate accepted
+	// this event and PopBatch then bypassed MaxBatchBytes for the first item.
+	c.CaptureMessage(context.Background(), strings.Repeat("\x00", 2<<10), LevelInfo)
+	c.CaptureMessage(context.Background(), "healthy", LevelInfo)
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	payload := decodePayload(t, sender)
+	if len(payload.Events) != 1 || payload.Events[0].Attributes.ErrorMessage != "healthy" {
+		t.Fatalf("payload contains %d events, want only the healthy event", len(payload.Events))
+	}
+	stats := c.Stats()
+	if stats.Captured != 1 || stats.Sent != 1 || stats.DroppedOverflow != 1 || dropped != 1 {
+		t.Fatalf("Stats = %+v OnDrop=%d, want one accepted and one oversized drop", stats, dropped)
+	}
+	if len(sender.Bodies()[0]) > 4<<10 {
+		t.Fatalf("request body = %d bytes, exceeds MaxBatchBytes", len(sender.Bodies()[0]))
 	}
 }
 
@@ -253,8 +336,52 @@ func TestCaptureMessage(t *testing.T) {
 	}
 }
 
+// After Close there is nothing left to drain, so a late capture must be
+// discarded rather than retained in the queue forever.
+func TestCaptureAfterCloseIsDiscarded(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{EnableLogs: true}, sender)
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for range 100 {
+		c.CaptureError(context.Background(), errors.New("late"))
+		c.EmitLog(context.Background(), LevelError, "late")
+	}
+	if got := c.Stats(); got.Captured != 0 || got.QueuePendingItems != 0 || got.DroppedShutdown != 100 {
+		t.Fatalf("event stats after Close = %+v, want 100 shutdown drops and nothing queued", got)
+	}
+	if got := c.LogStats(); got.Captured != 0 || got.QueuePendingItems != 0 || got.DroppedShutdown != 100 {
+		t.Fatalf("log stats after Close = %+v, want 100 shutdown drops and nothing queued", got)
+	}
+}
+
 func TestNewRequiresDSN(t *testing.T) {
 	if _, err := New(Config{}); !errors.Is(err, ErrMissingDSN) {
 		t.Fatalf("expected ErrMissingDSN, got %v", err)
+	}
+}
+
+// A DSN that cannot produce a usable URL is a configuration error, reported at
+// construction rather than as a delivery failure for the life of the process.
+func TestNewRejectsUnusableDSN(t *testing.T) {
+	for _, dsn := range []string{
+		"ftp://host.example", "https://", "://host.example",
+		"https://host.example?tenant=x",
+		"https://host.example#fragment",
+		"https://user:password@host.example",
+	} {
+		if _, err := New(Config{DSN: dsn}); err == nil {
+			t.Errorf("New(DSN=%q) = nil error, want a configuration error", dsn)
+		}
+	}
+	// A host without a scheme, and a host:port, still get the default scheme.
+	for _, dsn := range []string{"host.example", "localhost:8080", "HTTPS://host.example"} {
+		client, err := New(Config{DSN: dsn})
+		if err != nil {
+			t.Errorf("New(DSN=%q) = %v, want nil", dsn, err)
+			continue
+		}
+		_ = client.Close(context.Background())
 	}
 }

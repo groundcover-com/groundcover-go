@@ -15,6 +15,9 @@ type Stats struct {
 	DroppedSendExhausted int64
 	// DroppedBeforeSend is the number of events dropped by BeforeSend.
 	DroppedBeforeSend int64
+	// DroppedShutdown is the number of events refused because the client had
+	// started closing.
+	DroppedShutdown int64
 	// Retries is the number of delivery retry attempts.
 	Retries int64
 	// RateLimited is the number of 429 responses observed.
@@ -40,6 +43,7 @@ func statsFromSnapshot(s selfmetrics.Snapshot) Stats {
 		DroppedOverflow:      s.DroppedOverflow,
 		DroppedSendExhausted: s.DroppedSend,
 		DroppedBeforeSend:    s.DroppedBeforeSend,
+		DroppedShutdown:      s.DroppedShutdown,
 		Retries:              s.Retries,
 		RateLimited:          s.RateLimited,
 		PanicsRecovered:      s.PanicsRecovered,

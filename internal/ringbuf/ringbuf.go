@@ -48,12 +48,21 @@ func New[T any](maxItems, maxBytes int, sizeOf Sizer[T]) *Buffer[T] {
 }
 
 // Push appends item, evicting the oldest entries until the buffer is within both
-// bounds. It always accepts item (the caller never blocks) and returns the
-// number of entries evicted to make room.
+// bounds. An item larger than the byte budget is rejected. The caller never
+// blocks; the return value is the number of existing or incoming entries
+// dropped.
 func (b *Buffer[T]) Push(item T) (dropped int) {
-	size := b.sizeOf(item)
+	return b.PushSized(item, b.sizeOf(item))
+}
+
+// PushSized is Push for callers that already know the item's size and want to
+// avoid recomputing it. The size is clamped to a minimum of one.
+func (b *Buffer[T]) PushSized(item T, size int) (dropped int) {
 	if size < 1 {
 		size = 1
+	}
+	if size > b.maxBytes {
+		return 1
 	}
 
 	b.mu.Lock()
@@ -73,6 +82,52 @@ func (b *Buffer[T]) Push(item T) (dropped int) {
 	b.count++
 	b.bytes += size
 
+	for b.bytes > b.maxBytes && b.count > 1 {
+		b.popOldest()
+		dropped++
+	}
+	return dropped
+}
+
+// Requeue puts a previously popped batch back at the head, oldest first, so
+// FIFO order is restored. It is for callers that popped a batch and then could
+// not dispatch it. Entries that no longer fit within the bounds are dropped and
+// counted, newest-wins as in Push.
+func (b *Buffer[T]) Requeue(items []T) (dropped int) {
+	if len(items) == 0 {
+		return 0
+	}
+	sizes := make([]int, len(items))
+	for i, item := range items {
+		size := b.sizeOf(item)
+		if size < 1 {
+			size = 1
+		}
+		sizes[i] = size
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := len(items) - 1; i >= 0; i-- {
+		if sizes[i] > b.maxBytes {
+			dropped++
+			continue
+		}
+		if b.count == len(b.buf) && b.count < b.maxItems {
+			b.grow()
+		}
+		if b.count == b.maxItems {
+			// The queue refilled while this batch was out; newer entries win.
+			dropped++
+			continue
+		}
+		b.head = (b.head - 1 + len(b.buf)) % len(b.buf)
+		b.buf[b.head] = items[i]
+		b.sz[b.head] = sizes[i]
+		b.count++
+		b.bytes += sizes[i]
+	}
 	for b.bytes > b.maxBytes && b.count > 1 {
 		b.popOldest()
 		dropped++

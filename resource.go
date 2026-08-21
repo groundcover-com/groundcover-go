@@ -54,7 +54,7 @@ func detectResource(cfg Config) resource {
 	release := firstNonEmpty(cfg.Release, os.Getenv("GC_RELEASE"))
 
 	namespace := firstNonEmpty(os.Getenv("POD_NAMESPACE"), os.Getenv("NAMESPACE"), os.Getenv("K8S_NAMESPACE"))
-	cluster := firstNonEmpty(os.Getenv("GC_CLUSTER"), os.Getenv("CLUSTER_NAME"), os.Getenv("K8S_CLUSTER_NAME"))
+	cluster := firstNonEmpty(cfg.Cluster, os.Getenv("GC_CLUSTER"), os.Getenv("CLUSTER_NAME"), os.Getenv("K8S_CLUSTER_NAME"))
 	podUID := os.Getenv("POD_UID")
 	podName := firstNonEmpty(os.Getenv("POD_NAME"), os.Getenv("HOSTNAME"))
 	nodeName := os.Getenv("NODE_NAME")

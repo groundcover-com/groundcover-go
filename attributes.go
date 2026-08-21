@@ -2,7 +2,10 @@ package groundcover
 
 import (
 	"fmt"
+	"math"
 	"reflect"
+
+	"github.com/groundcover-com/groundcover-go/internal/safefmt"
 )
 
 // Attributes is a bag of custom, caller-supplied data attached to an event.
@@ -57,13 +60,22 @@ func sanitizeValue(v any, depth int) any {
 		return nil
 	}
 	if depth >= maxAttrDepth {
-		return fmt.Sprintf("%v", v)
+		return safefmt.String(v)
 	}
 	switch val := v.(type) {
 	case string, bool,
 		int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64:
+		uint, uint8, uint16, uint32, uint64:
+		return val
+	case float32:
+		if math.IsNaN(float64(val)) || math.IsInf(float64(val), 0) {
+			return fmt.Sprint(val)
+		}
+		return val
+	case float64:
+		if math.IsNaN(val) || math.IsInf(val, 0) {
+			return fmt.Sprint(val)
+		}
 		return val
 	case error:
 		return val.Error()
@@ -106,15 +118,16 @@ func sanitizeReflect(v any, depth int) any {
 	case reflect.Map:
 		out := make(map[string]any, rv.Len())
 		for _, key := range rv.MapKeys() {
-			out[fmt.Sprintf("%v", key.Interface())] = sanitizeValue(rv.MapIndex(key).Interface(), depth+1)
+			out[safefmt.String(key.Interface())] = sanitizeValue(rv.MapIndex(key).Interface(), depth+1)
 		}
 		return out
 	case reflect.Pointer:
 		if rv.IsNil() {
 			return nil
 		}
-		return sanitizeValue(rv.Elem().Interface(), depth)
+		// depth+1: a recursive pointer type would otherwise never reach the cap.
+		return sanitizeValue(rv.Elem().Interface(), depth+1)
 	default:
-		return fmt.Sprintf("%v", v)
+		return safefmt.String(v)
 	}
 }

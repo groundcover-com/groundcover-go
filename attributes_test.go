@@ -1,6 +1,8 @@
 package groundcover
 
 import (
+	"encoding/json"
+	"math"
 	"net"
 	"testing"
 )
@@ -41,6 +43,10 @@ func TestSanitizeValueTypes(t *testing.T) {
 		{"string", "x", "x"},
 		{"int", 5, 5},
 		{"float", 1.5, 1.5},
+		{"float32 NaN", float32(math.NaN()), "NaN"},
+		{"float32 +Inf", float32(math.Inf(1)), "+Inf"},
+		{"float64 NaN", math.NaN(), "NaN"},
+		{"float64 -Inf", math.Inf(-1), "-Inf"},
 		{"bool", true, true},
 		{"nil", nil, nil},
 		{"stringer", stringerType{s: "hi"}, "hi"},
@@ -93,5 +99,28 @@ func TestSanitizeValueDepthLimit(t *testing.T) {
 	out := sanitizeValue(deep, 0)
 	if out == nil {
 		t.Fatal("expected a sanitized value")
+	}
+}
+
+// A cyclic attribute must not reach fmt, whose unbounded recursion would kill
+// the host process with an unrecoverable stack overflow.
+func TestSanitizeValueCyclicAttributesDoNotCrash(t *testing.T) {
+	cyclic := map[string]any{"name": "root"}
+	cyclic["self"] = cyclic
+
+	type holder struct{ data map[string]any }
+
+	for name, value := range map[string]any{
+		"direct":        cyclic,
+		"in slice":      []any{cyclic},
+		"behind struct": holder{data: cyclic},
+	} {
+		out := sanitizeAttributes(Attributes{"attr": value})
+		if out["attr"] == nil {
+			t.Errorf("%s: attribute was dropped", name)
+		}
+		if _, err := json.Marshal(out); err != nil {
+			t.Errorf("%s: sanitized value is not encodable: %v", name, err)
+		}
 	}
 }
