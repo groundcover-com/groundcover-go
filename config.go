@@ -58,8 +58,8 @@ type Config struct {
 	ServiceName string
 	// Env overrides deployment.environment.name (env: GC_ENV / DEPLOYMENT_ENVIRONMENT).
 	Env string
-	// Cluster overrides the x-groundcover-cluster header used by the logs
-	// intake (env: GC_CLUSTER / CLUSTER_NAME / K8S_CLUSTER_NAME).
+	// Cluster overrides the cluster field written to each log record (env:
+	// GC_CLUSTER / CLUSTER_NAME / K8S_CLUSTER_NAME).
 	Cluster string
 	// Release overrides service.version (env: GC_RELEASE).
 	Release string
@@ -96,8 +96,8 @@ type Config struct {
 	// (sized by the same MaxQueue/MaxBytes/BatchSize knobs) so log volume
 	// never evicts or delays error events.
 	EnableLogs bool
-	// LogSource sets the x-groundcover-source header used by the direct logs
-	// intake. It defaults to "go".
+	// LogSource sets the source field written to each log record. It defaults
+	// to "go".
 	LogSource string
 	// BeforeSendLog can scrub or sample a log record; returning nil drops it.
 	// It runs before identity hashing, like BeforeSend.

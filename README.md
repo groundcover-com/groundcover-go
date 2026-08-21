@@ -82,10 +82,11 @@ groundcover.Config{
 }
 ```
 
-The SDK sets the service, environment, cluster, and source intake headers from
-`ServiceName`, `Env`, `Cluster`, and `LogSource`. Each NDJSON record uses an
-RFC 3339 Nano `timestamp`, `msg`, and `level`; all other fields are retained as
-log attributes.
+Each NDJSON record includes `service`, `env`, `cluster`, and `source`, populated
+from `ServiceName`, `Env`, `Cluster`, and `LogSource`. It also uses an RFC 3339
+Nano `timestamp`, `msg`, and `level`; all other fields are retained as log
+attributes. Resource metadata is deliberately per-record rather than encoded
+in HTTP headers.
 
 There are two layers, by design:
 

@@ -83,29 +83,29 @@ func TestEmitLogRoundTrip(t *testing.T) {
 
 func TestLogIntakeRequestContract(t *testing.T) {
 	type capturedRequest struct {
-		path        string
-		contentType string
-		encoding    string
-		auth        string
-		service     string
-		env         string
-		cluster     string
-		source      string
-		body        []byte
+		path          string
+		contentType   string
+		encoding      string
+		auth          string
+		serviceHeader string
+		envHeader     string
+		clusterHeader string
+		sourceHeader  string
+		body          []byte
 	}
 	got := make(chan capturedRequest, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		got <- capturedRequest{
-			path:        r.URL.Path,
-			contentType: r.Header.Get("Content-Type"),
-			encoding:    r.Header.Get("Content-Encoding"),
-			auth:        r.Header.Get("Authorization"),
-			service:     r.Header.Get("x-groundcover-service-name"),
-			env:         r.Header.Get("x-groundcover-env-name"),
-			cluster:     r.Header.Get("x-groundcover-cluster"),
-			source:      r.Header.Get("x-groundcover-source"),
-			body:        body,
+			path:          r.URL.Path,
+			contentType:   r.Header.Get("Content-Type"),
+			encoding:      r.Header.Get("Content-Encoding"),
+			auth:          r.Header.Get("Authorization"),
+			serviceHeader: r.Header.Get("x-groundcover-service-name"),
+			envHeader:     r.Header.Get("x-groundcover-env-name"),
+			clusterHeader: r.Header.Get("x-groundcover-cluster"),
+			sourceHeader:  r.Header.Get("x-groundcover-source"),
+			body:          body,
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -142,9 +142,9 @@ func TestLogIntakeRequestContract(t *testing.T) {
 	if req.auth != "Bearer logs-key" {
 		t.Fatalf("authorization = %q", req.auth)
 	}
-	if req.service != "checkout" || req.env != "production" || req.cluster != "cluster-a" || req.source != "my-source" {
-		t.Fatalf("resource headers: service=%q env=%q cluster=%q source=%q",
-			req.service, req.env, req.cluster, req.source)
+	if req.serviceHeader != "" || req.envHeader != "" || req.clusterHeader != "" || req.sourceHeader != "" {
+		t.Fatalf("resource metadata must not use headers: service=%q env=%q cluster=%q source=%q",
+			req.serviceHeader, req.envHeader, req.clusterHeader, req.sourceHeader)
 	}
 	var record map[string]any
 	if err := json.Unmarshal(bytes.TrimSpace(req.body), &record); err != nil {
@@ -152,6 +152,10 @@ func TestLogIntakeRequestContract(t *testing.T) {
 	}
 	if record["msg"] != "log message" || record["order_id"] != "o-9" {
 		t.Fatalf("record = %+v", record)
+	}
+	if record["service"] != "checkout" || record["env"] != "production" ||
+		record["cluster"] != "cluster-a" || record["source"] != "my-source" {
+		t.Fatalf("resource fields = %+v", record)
 	}
 }
 

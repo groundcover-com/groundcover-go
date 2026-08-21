@@ -18,7 +18,8 @@ func wireLogLevel(l Level) string {
 // must not be set by caller attributes.
 func isLogReservedKey(k string) bool {
 	switch k {
-	case "timestamp", "msg", "message", wireKeyLevel, wireKeySeverity,
+	case "timestamp", "msg", "message", "service", "env", "cluster", "source",
+		wireKeyLevel, wireKeySeverity,
 		wireKeyUserID, wireKeyUserEmail, wireKeyUserName, wireKeyUserOrg,
 		wireKeySessionID, wireKeyAnonymousID:
 		return true
@@ -30,7 +31,7 @@ func isLogReservedKey(k string) bool {
 // buildWireLog assembles one flat NDJSON record for /json/logs. Caller
 // attributes are written first; SDK-managed fields are written afterwards so
 // a caller cannot override them.
-func buildWireLog(l *Log, res resource) map[string]any {
+func buildWireLog(l *Log, res resource, source string) map[string]any {
 	record := make(map[string]any, len(l.Attributes)+len(res.attrs)+10)
 
 	flattenInto(record, "", l.Attributes)
@@ -60,6 +61,10 @@ func buildWireLog(l *Log, res resource) map[string]any {
 	record["msg"] = l.Message
 	record[wireKeyLevel] = wireLogLevel(l.Level)
 	record[wireKeySeverity] = l.Level.severityNumber()
+	record["service"] = res.serviceName
+	record["env"] = res.env
+	record["cluster"] = res.cluster
+	record["source"] = source
 	return record
 }
 
@@ -90,10 +95,10 @@ func setIfNonEmptyAny(m map[string]any, k, v string) {
 
 // encodeLogBatch serializes a batch into newline-delimited JSON. The trailing
 // newline is intentional and accepted by the logs intake.
-func encodeLogBatch(logs []*Log, res resource) ([]byte, error) {
+func encodeLogBatch(logs []*Log, res resource, source string) ([]byte, error) {
 	var buf bytes.Buffer
 	for _, l := range logs {
-		line, err := json.Marshal(buildWireLog(l, res))
+		line, err := json.Marshal(buildWireLog(l, res, source))
 		if err != nil {
 			return nil, err
 		}

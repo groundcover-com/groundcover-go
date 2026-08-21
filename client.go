@@ -98,18 +98,12 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 			UserAgent:    c.res.userAgent,
 			Client:       client,
 		})
-		logHeaders := make(http.Header)
-		logHeaders.Set("x-groundcover-service-name", c.res.serviceName)
-		logHeaders.Set("x-groundcover-env-name", c.res.env)
-		logHeaders.Set("x-groundcover-cluster", c.res.cluster)
-		logHeaders.Set("x-groundcover-source", resolved.LogSource)
 		logSender = transport.NewHTTPSender(transport.HTTPConfig{
 			Endpoint:           resolved.logsEndpoint(),
 			IngestionKey:       firstNonEmpty(resolved.LogsIngestionKey, resolved.IngestionKey),
 			UserAgent:          c.res.userAgent,
 			Client:             client,
 			ContentType:        "application/x-ndjson",
-			Headers:            logHeaders,
 			DisableCompression: true,
 		})
 	}
@@ -133,7 +127,7 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 
 	if resolved.EnableLogs {
 		c.logRing = ringbuf.New[*Log](resolved.MaxQueue, resolved.MaxBytes, estimateLogSize)
-		encodeLogs := func(items []*Log) ([]byte, error) { return encodeLogBatch(items, res) }
+		encodeLogs := func(items []*Log) ([]byte, error) { return encodeLogBatch(items, res, resolved.LogSource) }
 		c.logWorker = transport.NewWorker[*Log](
 			c.logRing, logSender, encodeLogs, metricsObserver{m: c.logMetrics}, c.throttle, c.onPanic, workerCfg,
 		)
