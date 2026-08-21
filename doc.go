@@ -42,12 +42,15 @@
 //	groundcover.LogInfo(ctx, "order created", groundcover.Attributes{"order_id": id})
 //	groundcover.LogErrorf(ctx, "charge %s failed", chargeID)
 //
-// EmitLog and the Log* helpers are the emission primitives; logging-library
-// bridges are built on top of them. The gcslog subpackage bridges the standard
-// library's log/slog, and bridges for third-party logging libraries live in
-// nested modules under contrib/. Records inherit identity and attributes from
-// the context scope, can be scrubbed or sampled with Config.BeforeSendLog, and
-// are observable via Client.LogStats / GlobalLogStats.
+// Programs that need only log delivery can use the standalone client in the
+// logs subpackage instead of this aggregate SDK; it owns its own queue,
+// delivery, statistics, and shutdown. EnableLogs composes that same standalone
+// client behind the root convenience API. The gcslog subpackage bridges the
+// standard library's log/slog onto either client, and bridges for third-party
+// logging libraries live in nested modules under contrib/. Records inherit
+// identity and attributes from the context scope, can be scrubbed or sampled
+// with Config.BeforeSendLog, and are observable via Client.LogStats /
+// GlobalLogStats.
 //
 // # Instrumenting an existing service
 //
