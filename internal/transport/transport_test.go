@@ -462,3 +462,79 @@ func TestWorkerCloseTimesOutWhileFlushHoldsGate(t *testing.T) {
 		t.Fatalf("retry Close should drain remaining items, got %d", ring.Len())
 	}
 }
+
+// A flush deadline bounds how long the caller waits, not whether the batch is
+// delivered: a short flush against a slow intake must not discard anything.
+func TestShortFlushDeadlineDoesNotDiscardBatches(t *testing.T) {
+	release := make(chan struct{})
+	sender := &testutil.MockSender{
+		Responder: func(int, []byte) error {
+			<-release
+			return nil
+		},
+	}
+	obs := &countObserver{}
+	w, ring := newWorker(t, sender, obs, transport.WorkerConfig{BatchSize: 5})
+	w.Start()
+
+	for i := range 5 {
+		ring.Push(i)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := w.Flush(ctx); err == nil {
+		t.Fatal("Flush should report its deadline expiring while the send is in flight")
+	}
+	if got := obs.exhausted.Load(); got != 0 {
+		t.Fatalf("flush deadline discarded %d items", got)
+	}
+
+	close(release)
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := obs.sent.Load(); got != 5 {
+		t.Fatalf("sent = %d, want the in-flight batch to complete", got)
+	}
+	if got := obs.exhausted.Load(); got != 0 {
+		t.Fatalf("exhausted = %d, want 0", got)
+	}
+}
+
+// When no send slot frees up before the caller's deadline, the popped batch goes
+// back on the queue rather than being dropped.
+func TestUndispatchableBatchIsRequeued(t *testing.T) {
+	release := make(chan struct{})
+	sender := &testutil.MockSender{
+		Responder: func(int, []byte) error {
+			<-release
+			return nil
+		},
+	}
+	obs := &countObserver{}
+	// One concurrent send, so the second batch cannot be handed off.
+	w, ring := newWorker(t, sender, obs, transport.WorkerConfig{BatchSize: 1, MaxConcurrent: 1})
+	w.Start()
+
+	ring.Push(1)
+	ring.Push(2)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := w.Flush(ctx); err == nil {
+		t.Fatal("Flush should report its deadline expiring")
+	}
+	if got := ring.Len(); got != 1 {
+		t.Fatalf("queued = %d, want the undispatched batch requeued", got)
+	}
+	if got := obs.exhausted.Load(); got != 0 {
+		t.Fatalf("exhausted = %d, want 0", got)
+	}
+
+	close(release)
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := obs.sent.Load(); got != 2 {
+		t.Fatalf("sent = %d, want both batches delivered", got)
+	}
+}

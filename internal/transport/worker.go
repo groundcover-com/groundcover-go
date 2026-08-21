@@ -101,7 +101,7 @@ type Worker[T any] struct {
 	cancelBase context.CancelFunc
 
 	sem      chan struct{}
-	inflight sync.WaitGroup
+	inflight *inflightSet
 	// dispatchGate serializes removing batches from the ring with registering
 	// their sends in inflight. Flush holds it while waiting, which makes the
 	// drain-and-wait operation an atomic barrier.
@@ -141,6 +141,7 @@ func NewWorker[T any](
 		baseCtx:    baseCtx,
 		cancelBase: cancel,
 		sem:        make(chan struct{}, cfg.MaxConcurrent),
+		inflight:   newInflightSet(),
 		dispatchGate: func() chan struct{} {
 			gate := make(chan struct{}, 1)
 			gate <- struct{}{}
@@ -208,32 +209,42 @@ func (w *Worker[T]) dispatchReady(ctx context.Context) {
 }
 
 // dispatchReadyLocked pops and dispatches all currently-buffered batches.
-// The caller holds dispatchGate.
+// The caller holds dispatchGate. It stops early when ctx expires, leaving the
+// remaining entries queued.
 func (w *Worker[T]) dispatchReadyLocked(ctx context.Context) {
 	for {
 		batch := w.ring.PopBatch(w.cfg.BatchSize, w.cfg.MaxBatchBytes)
 		if len(batch) == 0 {
 			return
 		}
-		w.dispatch(ctx, batch)
+		if !w.dispatch(ctx, batch) {
+			return
+		}
 	}
 }
 
-// dispatch sends a batch, bounded by the concurrency semaphore. If the semaphore
-// is full it sends synchronously to apply natural backpressure on the loop
-// (never on the caller).
-func (w *Worker[T]) dispatch(ctx context.Context, batch []T) {
+// dispatch hands a batch to a send goroutine, bounded by the concurrency
+// semaphore. waitCtx bounds only how long we wait for a free slot; the send
+// itself runs under the worker's base context, so a caller's flush deadline
+// decides how long it waits for delivery, never whether delivery happens.
+// A batch that cannot be handed off is put back on the queue, and dispatch
+// reports false so the caller stops draining.
+func (w *Worker[T]) dispatch(waitCtx context.Context, batch []T) bool {
 	select {
 	case w.sem <- struct{}{}:
-		w.inflight.Add(1)
-		safeguard.Go(func() {
-			defer w.inflight.Done()
-			defer func() { <-w.sem }()
-			w.sendWithRetry(ctx, batch)
-		}, w.onPanic)
-	default:
-		w.sendWithRetry(ctx, batch)
+	case <-waitCtx.Done():
+		if dropped := w.ring.Requeue(batch); dropped > 0 {
+			w.observeExhausted(dropped)
+		}
+		return false
 	}
+	w.inflight.add()
+	safeguard.Go(func() {
+		defer w.inflight.done()
+		defer func() { <-w.sem }()
+		w.sendWithRetry(w.baseCtx, batch)
+	}, w.onPanic)
+	return true
 }
 
 // sendWithRetry delivers a batch, guarded so a panic in encoding or in the
@@ -322,6 +333,10 @@ func (w *Worker[T]) expBackoff(attempt int) time.Duration {
 // Flush drains the buffer and waits for in-flight sends, bounded by ctx. It
 // drains even if the worker loop has self-disabled — a caller-driven dispatch —
 // so pending events are never silently left behind on a "successful" flush.
+//
+// ctx bounds only the waiting. A flush that times out leaves its batches either
+// in flight (they keep going and are still delivered) or queued for the next
+// flush; it never discards them.
 func (w *Worker[T]) Flush(ctx context.Context) error {
 	if !w.acquireDispatch(ctx) {
 		return ctx.Err()
@@ -371,17 +386,58 @@ func (w *Worker[T]) releaseDispatch() {
 
 // waitInflight blocks until all in-flight sends complete or ctx expires.
 func (w *Worker[T]) waitInflight(ctx context.Context) error {
-	done := make(chan struct{})
-	go func() {
-		w.inflight.Wait()
-		close(done)
-	}()
 	select {
-	case <-done:
+	case <-w.inflight.idle():
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// inflightSet counts running sends. It exists instead of a sync.WaitGroup
+// because a waiter may give up — a flush whose deadline expires — while sends
+// are still running and new ones are starting, which a WaitGroup treats as
+// reuse before Wait returned and panics on.
+type inflightSet struct {
+	mu     sync.Mutex
+	count  int
+	idleCh chan struct{}
+}
+
+func newInflightSet() *inflightSet {
+	idleCh := make(chan struct{})
+	close(idleCh)
+	return &inflightSet{idleCh: idleCh}
+}
+
+// add registers one send.
+func (s *inflightSet) add() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.count == 0 {
+		s.idleCh = make(chan struct{})
+	}
+	s.count++
+}
+
+// done retires one send, releasing waiters when none remain.
+func (s *inflightSet) done() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.count == 0 {
+		return
+	}
+	s.count--
+	if s.count == 0 {
+		close(s.idleCh)
+	}
+}
+
+// idle returns a channel that is closed while no sends are in flight.
+func (s *inflightSet) idle() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.idleCh
 }
 
 func (w *Worker[T]) reportQueue() {

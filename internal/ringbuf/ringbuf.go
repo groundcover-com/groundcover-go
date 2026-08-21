@@ -89,6 +89,52 @@ func (b *Buffer[T]) PushSized(item T, size int) (dropped int) {
 	return dropped
 }
 
+// Requeue puts a previously popped batch back at the head, oldest first, so
+// FIFO order is restored. It is for callers that popped a batch and then could
+// not dispatch it. Entries that no longer fit within the bounds are dropped and
+// counted, newest-wins as in Push.
+func (b *Buffer[T]) Requeue(items []T) (dropped int) {
+	if len(items) == 0 {
+		return 0
+	}
+	sizes := make([]int, len(items))
+	for i, item := range items {
+		size := b.sizeOf(item)
+		if size < 1 {
+			size = 1
+		}
+		sizes[i] = size
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := len(items) - 1; i >= 0; i-- {
+		if sizes[i] > b.maxBytes {
+			dropped++
+			continue
+		}
+		if b.count == len(b.buf) && b.count < b.maxItems {
+			b.grow()
+		}
+		if b.count == b.maxItems {
+			// The queue refilled while this batch was out; newer entries win.
+			dropped++
+			continue
+		}
+		b.head = (b.head - 1 + len(b.buf)) % len(b.buf)
+		b.buf[b.head] = items[i]
+		b.sz[b.head] = sizes[i]
+		b.count++
+		b.bytes += sizes[i]
+	}
+	for b.bytes > b.maxBytes && b.count > 1 {
+		b.popOldest()
+		dropped++
+	}
+	return dropped
+}
+
 // PopBatch removes and returns up to maxItems oldest entries, stopping early if
 // adding the next entry would exceed maxBytes (at least one entry is always
 // returned when the buffer is non-empty). Non-positive limits are ignored.
