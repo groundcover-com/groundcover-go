@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,6 +155,44 @@ func TestStandaloneSanitizesNonFiniteAndRejectsOversizedRecords(t *testing.T) {
 	client.Info(context.Background(), "after close")
 	if stats := client.Stats(); stats.Captured != 1 || stats.QueuePendingItems != 0 {
 		t.Fatalf("post-close stats = %+v", stats)
+	}
+}
+
+// A flush that gives up early must leave its records on the way to the intake,
+// not destroy them: a too-short shutdown budget is a common mistake and it must
+// not cost telemetry.
+func TestStandaloneShortFlushDoesNotLoseRecords(t *testing.T) {
+	var delivered atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		time.Sleep(300 * time.Millisecond)
+		delivered.Add(int64(bytes.Count(bytes.TrimSpace(body), []byte("\n")) + 1))
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := logs.New(logs.Config{
+		DSN:           server.URL,
+		HTTPClient:    server.Client(),
+		FlushInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for range 5 {
+		client.Info(context.Background(), "record")
+	}
+	if err := client.FlushTimeout(20 * time.Millisecond); err == nil {
+		t.Fatal("expected the short flush to report its deadline")
+	}
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := delivered.Load(); got != 5 {
+		t.Fatalf("delivered = %d, want 5", got)
+	}
+	if stats := client.Stats(); stats.Sent != 5 || stats.DroppedSendExhausted != 0 {
+		t.Fatalf("stats = %+v, want 5 sent and nothing dropped", stats)
 	}
 }
 
