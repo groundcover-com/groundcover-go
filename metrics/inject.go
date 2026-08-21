@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -369,7 +370,7 @@ func parseMetadataLine(line string) (parsedMetadata, error) {
 	}
 	if fields[0] == "TYPE" {
 		if len(fields) != 3 || !validMetricType(fields[2]) {
-			return parsedMetadata{}, fmt.Errorf("invalid TYPE declaration")
+			return parsedMetadata{}, errors.New("invalid TYPE declaration")
 		}
 	}
 	return parsedMetadata{

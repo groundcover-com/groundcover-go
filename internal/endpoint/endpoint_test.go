@@ -1,6 +1,7 @@
 package endpoint_test
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
@@ -122,7 +123,7 @@ func TestSafeRedirectPolicyPreservesCallerPolicy(t *testing.T) {
 	})
 	previous, _ := http.NewRequest(http.MethodGet, "https://host/one", nil)
 	next, _ := http.NewRequest(http.MethodGet, "https://host/two", nil)
-	if err := policy(next, []*http.Request{previous}); err != http.ErrUseLastResponse {
+	if err := policy(next, []*http.Request{previous}); !errors.Is(err, http.ErrUseLastResponse) {
 		t.Fatalf("policy error = %v, want ErrUseLastResponse", err)
 	}
 	if !called {
