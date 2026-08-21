@@ -184,12 +184,25 @@ reg.Histogram("request_seconds", nil, nil).Observe(0.042)
   `DisableRuntimeMetrics: true`.
 - Every sample gets `job` (defaults to `OTEL_SERVICE_NAME`/`GC_SERVICE_NAME`),
   `instance` (defaults to the hostname), and any configured `ExtraLabels`.
-  Any `MetricSource` source (anything that can write Prometheus text format) can
-  be plugged in next to the built-in `Registry`.
+  Any `MetricSource` (anything that can write Prometheus text format) can be
+  plugged in next to the built-in `Registry`; wrap it with
+  `metrics.Named("application", src)` to attribute its errors and stats.
+- Sources are isolated: a panicking or malformed source is reported through
+  `Push`'s aggregate error (`errors.Join`, child errors name the source)
+  while healthy sources are still delivered — a *partial push* in `Stats()`.
+- Duplicate final series across sources (same name and label set after label
+  injection) keep the first occurrence and drop the rest, reported as a typed
+  `*DuplicateSeriesError`; set `FailOnDuplicateSeries: true` to make
+  duplicates fail the whole push during pipeline migrations.
 - Payloads are bounded by documented limits (`MaxSeries` 10000,
   `MaxBodyBytes` 8MiB, per-label caps); exceeding one fails that push with a
   typed error and the worker keeps running. Failures surface via `OnError`
-  and `Stats()`; the client never panics and never blocks the host.
+  and the credential-free `Stats()` (push/partial/failure counters, malformed
+  lines, duplicates, label overrides, last attempt/success/error, worker
+  state); the client never panics and never blocks the host.
+- Advanced: `Config.Endpoint` overrides the full push URL for on-prem or
+  custom gateways (mutually exclusive with `DSN`). The default HTTP transport
+  is untouched, so proxy environment variables are honored.
 - The ingestion key must be metrics-capable: RUM-type keys are rejected by
   the metrics intake.
 

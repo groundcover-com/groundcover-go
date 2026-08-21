@@ -363,6 +363,14 @@ sample gets `job`, `instance` (hostname by default), and any `ExtraLabels`
 injected. Instrument lookups are get-or-create and never panic; push failures
 surface through `OnError` and `Stats()` and never stop the worker.
 
+Additional `MetricSource` producers can be pushed next to the registry; wrap
+them with `metrics.Named("name", src)` so errors and stats name the source.
+Sources are isolated — one failing source never blocks the others (partial
+pushes are counted in `Stats()`), and duplicate series across sources keep
+the first occurrence (`FailOnDuplicateSeries: true` makes them hard errors
+during migrations). `Config.Endpoint` can override the full push URL for
+custom gateways instead of `DSN`.
+
 ## 7. Scrub PII / secrets (when handling sensitive data)
 
 `BeforeSend` is the single chokepoint. Return `nil` to drop an event; mutate and
