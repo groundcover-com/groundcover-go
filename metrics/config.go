@@ -54,6 +54,17 @@ type Config struct {
 	// metrics source that is otherwise collected on every push.
 	DisableRuntimeMetrics bool
 
+	// FailOnDuplicateSeries makes a duplicate final series (same metric name
+	// and identical label set after fixed-label injection, across all
+	// sources) fail the whole push with a *DuplicateSeriesError instead of
+	// keeping the first occurrence and dropping the duplicate. The default
+	// (false) favors availability; the strict mode exists for migrations —
+	// when consolidating several metric pipelines onto this client, enable
+	// it first in staging so silently colliding series are surfaced as hard
+	// errors before the drop-the-duplicate behavior can mask them, then turn
+	// it off once the sources are known to be disjoint.
+	FailOnDuplicateSeries bool
+
 	// OnError observes periodic push failures from the background worker. It
 	// is panic-guarded; a panicking callback never crashes the worker.
 	OnError func(error)
@@ -141,8 +152,8 @@ func (c Config) validate() error {
 	return nil
 }
 
-// endpoint returns the fully-qualified import URL derived from the DSN.
-func (c Config) endpoint() string {
+// pushEndpoint returns the import URL derived from the DSN.
+func (c Config) pushEndpoint() string {
 	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
 	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
 		dsn = "https://" + dsn

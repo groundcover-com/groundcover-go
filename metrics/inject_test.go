@@ -134,8 +134,14 @@ func TestInjectionThroughPush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := client.Push(context.Background()); err != nil {
-		t.Fatalf("Push: %v", err)
+	// The malformed line makes this a partial push: delivery still happens
+	// and Push reports the failing source with the line number.
+	pushErr := client.Push(context.Background())
+	if pushErr == nil {
+		t.Fatal("Push = nil, want aggregate error for the malformed line")
+	}
+	if !strings.Contains(pushErr.Error(), `metric source "source[0]": malformed sample at line 7`) {
+		t.Errorf("Push error = %v, want malformed-line attribution", pushErr)
 	}
 
 	want := strings.Join([]string{
@@ -152,11 +158,21 @@ func TestInjectionThroughPush(t *testing.T) {
 	}
 
 	stats := client.Stats()
-	if stats.LinesSkipped != 1 {
-		t.Errorf("LinesSkipped = %d, want 1 (the malformed line)", stats.LinesSkipped)
+	if stats.MalformedLines != 1 {
+		t.Errorf("MalformedLines = %d, want 1 (the malformed line)", stats.MalformedLines)
 	}
 	if stats.SeriesLastPush != 5 {
 		t.Errorf("SeriesLastPush = %d, want 5", stats.SeriesLastPush)
+	}
+	if stats.PartialPushes != 1 || stats.PushFailures != 0 {
+		t.Errorf("partial accounting wrong: %+v", stats)
+	}
+	if stats.SourceFailures != 1 {
+		t.Errorf("SourceFailures = %d, want 1", stats.SourceFailures)
+	}
+	// One source label (job="original-job") was replaced by a fixed label.
+	if stats.LabelOverrides != 1 {
+		t.Errorf("LabelOverrides = %d, want 1", stats.LabelOverrides)
 	}
 }
 
@@ -167,9 +183,11 @@ func TestFixedLabelCollisionReplacement(t *testing.T) {
 			{name: "instance", value: "fixed-instance"},
 			{name: "job", value: "fixed-job"},
 		},
+		seen: make(map[string]string),
 	}
-	if err := r.addSource([]byte(`m{job="src",instance="src",other="keep"} 1` + "\n")); err != nil {
-		t.Fatalf("addSource: %v", err)
+	srcErrs, err := r.addSource("test", []byte(`m{job="src",instance="src",other="keep"} 1`+"\n"))
+	if err != nil || len(srcErrs) != 0 {
+		t.Fatalf("addSource: fatal=%v srcErrs=%v", err, srcErrs)
 	}
 	want := `m{instance="fixed-instance",job="fixed-job",other="keep"} 1` + "\n"
 	if got := r.out.String(); got != want {
@@ -177,6 +195,9 @@ func TestFixedLabelCollisionReplacement(t *testing.T) {
 	}
 	if strings.Count(r.out.String(), "job=") != 1 {
 		t.Error("duplicate job label emitted")
+	}
+	if r.overrides != 2 {
+		t.Errorf("overrides = %d, want 2 (job and instance replaced)", r.overrides)
 	}
 }
 
@@ -186,21 +207,26 @@ func TestPanickingSourceIsRecoveredAndSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := client.Push(context.Background()); err != nil {
-		t.Fatalf("Push: %v", err)
+	pushErr := client.Push(context.Background())
+	if pushErr == nil || !strings.Contains(pushErr.Error(), `metric source "source[0]": panic while rendering`) {
+		t.Fatalf("Push error = %v, want panic attribution for source[0]", pushErr)
 	}
 	if got := cs.last().body; !strings.Contains(got, "survivor") {
 		t.Errorf("surviving source missing from body:\n%s", got)
 	}
-	if stats := client.Stats(); stats.SourcePanics != 1 {
+	stats := client.Stats()
+	if stats.SourcePanics != 1 {
 		t.Errorf("SourcePanics = %d, want 1", stats.SourcePanics)
+	}
+	if stats.PartialPushes != 1 || stats.SourceFailures != 1 {
+		t.Errorf("partial accounting wrong: %+v", stats)
 	}
 }
 
 func TestCommentOnlyBodyLimit(t *testing.T) {
-	r := renderer{cfg: Config{MaxBodyBytes: 8}.withDefaults()}
+	r := renderer{cfg: Config{MaxBodyBytes: 8}.withDefaults(), seen: make(map[string]string)}
 	r.cfg.MaxBodyBytes = 8
-	err := r.addSource([]byte("# a very long comment line\n"))
+	_, err := r.addSource("test", []byte("# a very long comment line\n"))
 	var limitErr *LimitError
 	if !errors.As(err, &limitErr) || limitErr.Limit != "MaxBodyBytes" {
 		t.Errorf("err = %v, want *LimitError{MaxBodyBytes}", err)

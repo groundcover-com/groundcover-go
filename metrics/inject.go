@@ -17,21 +17,36 @@ type sample struct {
 }
 
 // renderer accumulates the exposition body for one push, injecting the fixed
-// labels into every sample line and enforcing the configured limits.
+// labels into every sample line, deduplicating final series across sources,
+// and enforcing the configured limits.
 type renderer struct {
-	cfg     Config
-	fixed   []label
-	out     bytes.Buffer
-	series  int
-	skipped int64
+	cfg   Config
+	fixed []label
+	out   bytes.Buffer
+	// seen maps the final series identity (name plus injected labels) to the
+	// name of the source that produced it first.
+	seen   map[string]string
+	series int
+
+	// Per-push counters, transferred into the client stats after rendering.
+	malformed  uint64
+	duplicates uint64
+	overrides  uint64
 }
 
 // addSource appends one source's exposition text to the body. Comment lines
 // are preserved verbatim, sample lines get the fixed labels injected, and
-// malformed sample lines are skipped and counted. A limit violation aborts
-// the push with a *LimitError.
-func (r *renderer) addSource(text []byte) error {
+// malformed sample lines and duplicate series are dropped and counted.
+//
+// srcErrs reports the source's non-fatal failures, bounded to the first
+// malformed line and the first dropped duplicate (all occurrences are
+// counted). fatal aborts the whole push: a limit violation, or a duplicate
+// series when Config.FailOnDuplicateSeries is set.
+func (r *renderer) addSource(sourceName string, text []byte) (srcErrs []error, fatal error) {
+	lineNo := 0
+	var malformedReported, duplicateReported bool
 	for len(text) > 0 {
+		lineNo++
 		line := text
 		if idx := bytes.IndexByte(text, '\n'); idx >= 0 {
 			line = text[:idx]
@@ -47,44 +62,67 @@ func (r *renderer) addSource(text []byte) error {
 			r.out.Write(line)
 			r.out.WriteByte('\n')
 			if r.out.Len() > r.cfg.MaxBodyBytes {
-				return &LimitError{Limit: limitMaxBodyBytes, Max: r.cfg.MaxBodyBytes, Actual: r.out.Len()}
+				return srcErrs, &LimitError{Limit: limitMaxBodyBytes, Max: r.cfg.MaxBodyBytes, Actual: r.out.Len()}
 			}
 			continue
 		}
 		parsed, err := parseSampleLine(string(line))
 		if err != nil {
-			r.skipped++
+			r.malformed++
+			if !malformedReported {
+				malformedReported = true
+				srcErrs = append(srcErrs, fmt.Errorf("metric source %q: malformed sample at line %d", sourceName, lineNo))
+			}
 			continue
 		}
-		if err := r.addSample(parsed); err != nil {
-			return err
+		dup, err := r.addSample(sourceName, parsed)
+		if err != nil {
+			return srcErrs, err
+		}
+		if dup != nil && !duplicateReported {
+			duplicateReported = true
+			srcErrs = append(srcErrs, dup)
 		}
 	}
-	return nil
+	return srcErrs, nil
 }
 
 // addSample merges the fixed labels into one parsed sample, enforces the
-// per-series limits, and appends the rendered line.
-func (r *renderer) addSample(s sample) error {
-	if r.series+1 > r.cfg.MaxSeries {
-		return &LimitError{Limit: limitMaxSeries, Max: r.cfg.MaxSeries, Actual: r.series + 1}
-	}
-	merged := mergeLabels(s.labels, r.fixed)
+// per-series limits, deduplicates the final series, and appends the rendered
+// line. A dropped duplicate is returned as dup; fatal errors abort the push.
+func (r *renderer) addSample(sourceName string, s sample) (dup *DuplicateSeriesError, fatal error) {
+	merged, overridden := mergeLabels(s.labels, r.fixed)
+	r.overrides += uint64(overridden)
 	if len(merged) > r.cfg.MaxLabelsPerSeries {
-		return &LimitError{Limit: limitMaxLabelsPerSeries, Max: r.cfg.MaxLabelsPerSeries, Actual: len(merged)}
+		return nil, &LimitError{Limit: limitMaxLabelsPerSeries, Max: r.cfg.MaxLabelsPerSeries, Actual: len(merged)}
 	}
 	for _, l := range merged {
 		if len(l.name) > r.cfg.MaxLabelNameBytes {
-			return &LimitError{Limit: limitMaxLabelNameBytes, Max: r.cfg.MaxLabelNameBytes, Actual: len(l.name)}
+			return nil, &LimitError{Limit: limitMaxLabelNameBytes, Max: r.cfg.MaxLabelNameBytes, Actual: len(l.name)}
 		}
 		if len(l.value) > r.cfg.MaxLabelValueBytes {
-			return &LimitError{Limit: limitMaxLabelValueBytes, Max: r.cfg.MaxLabelValueBytes, Actual: len(l.value)}
+			return nil, &LimitError{Limit: limitMaxLabelValueBytes, Max: r.cfg.MaxLabelValueBytes, Actual: len(l.value)}
 		}
 	}
+
 	var b strings.Builder
 	b.Grow(len(s.name) + len(s.value) + len(s.timestamp) + 16*len(merged) + 4)
 	b.WriteString(s.name)
 	writeLabels(&b, merged)
+	identity := b.String()
+	if first, exists := r.seen[identity]; exists {
+		r.duplicates++
+		dup = &DuplicateSeriesError{Series: identity, FirstSource: first, DuplicateSource: sourceName}
+		if r.cfg.FailOnDuplicateSeries {
+			return nil, dup
+		}
+		return dup, nil
+	}
+
+	if r.series+1 > r.cfg.MaxSeries {
+		return nil, &LimitError{Limit: limitMaxSeries, Max: r.cfg.MaxSeries, Actual: r.series + 1}
+	}
+	r.seen[identity] = sourceName
 	b.WriteByte(' ')
 	b.WriteString(s.value)
 	if s.timestamp != "" {
@@ -95,28 +133,32 @@ func (r *renderer) addSample(s sample) error {
 	r.out.WriteString(b.String())
 	r.series++
 	if r.out.Len() > r.cfg.MaxBodyBytes {
-		return &LimitError{Limit: limitMaxBodyBytes, Max: r.cfg.MaxBodyBytes, Actual: r.out.Len()}
+		return nil, &LimitError{Limit: limitMaxBodyBytes, Max: r.cfg.MaxBodyBytes, Actual: r.out.Len()}
 	}
-	return nil
+	return nil, nil
 }
 
 // mergeLabels overlays the fixed labels on the source labels. Fixed labels
-// replace same-named source labels; the result is sorted by name and never
-// contains duplicates.
-func mergeLabels(source, fixed []label) []label {
+// replace same-named source labels; overridden reports how many source
+// labels were replaced. The result is sorted by name and never contains
+// duplicates.
+func mergeLabels(source, fixed []label) (merged []label, overridden int) {
 	byName := make(map[string]string, len(source)+len(fixed))
 	for _, l := range source {
 		byName[l.name] = l.value
 	}
 	for _, l := range fixed {
+		if _, exists := byName[l.name]; exists {
+			overridden++
+		}
 		byName[l.name] = l.value
 	}
-	merged := make([]label, 0, len(byName))
+	merged = make([]label, 0, len(byName))
 	for name, value := range byName {
 		merged = append(merged, label{name: name, value: value})
 	}
 	sort.Slice(merged, func(i, j int) bool { return merged[i].name < merged[j].name })
-	return merged
+	return merged, overridden
 }
 
 // parseSampleLine parses one Prometheus text-format sample line:

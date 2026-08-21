@@ -12,6 +12,26 @@ var ErrMissingDSN = errors.New("metrics: DSN is required unless Disabled is true
 // already running.
 var ErrAlreadyStarted = errors.New("metrics: client already started")
 
+// DuplicateSeriesError reports two sources producing the same final series
+// (same metric name and identical label set after fixed-label injection).
+// By default the first occurrence is kept, the duplicate is dropped, and the
+// error is reported through Push's aggregate error; with
+// Config.FailOnDuplicateSeries the whole push fails with this error.
+type DuplicateSeriesError struct {
+	// Series is the final series identity (name plus sorted labels).
+	Series string
+	// FirstSource is the name of the source whose sample was kept.
+	FirstSource string
+	// DuplicateSource is the name of the source whose sample was dropped.
+	DuplicateSource string
+}
+
+// Error implements error.
+func (e *DuplicateSeriesError) Error() string {
+	return fmt.Sprintf("metrics: duplicate series %s: first from source %q, duplicate from source %q",
+		e.Series, e.FirstSource, e.DuplicateSource)
+}
+
 // StatusError is returned by Push when the backend answers with a non-2xx
 // status. Body holds a bounded excerpt (at most 4KiB) of the response body.
 // The ingestion key is never included.

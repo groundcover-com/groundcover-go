@@ -142,14 +142,23 @@ func TestPushContract(t *testing.T) {
 	}
 
 	stats := client.Stats()
-	if stats.PushesAttempted != 1 || stats.PushesSucceeded != 1 || stats.PushesFailed != 0 {
+	if stats.Pushes != 1 || stats.PushFailures != 0 || stats.PartialPushes != 0 {
 		t.Errorf("stats = %+v", stats)
 	}
 	if stats.SeriesLastPush != 1 {
 		t.Errorf("SeriesLastPush = %d, want 1", stats.SeriesLastPush)
 	}
-	if !stats.LastErrorTime.IsZero() {
-		t.Errorf("LastErrorTime = %v, want zero", stats.LastErrorTime)
+	if stats.BytesLastPush != len(want) {
+		t.Errorf("BytesLastPush = %d, want %d", stats.BytesLastPush, len(want))
+	}
+	if stats.LastAttempt.IsZero() || stats.LastSuccess.IsZero() {
+		t.Errorf("LastAttempt/LastSuccess not set: %+v", stats)
+	}
+	if stats.LastError != "" {
+		t.Errorf("LastError = %q, want empty", stats.LastError)
+	}
+	if stats.WorkerRunning {
+		t.Error("WorkerRunning = true with no worker started")
 	}
 }
 
@@ -183,11 +192,17 @@ func TestPushNon2xxStatusError(t *testing.T) {
 		t.Error("error string contains the ingestion key")
 	}
 	stats := client.Stats()
-	if stats.PushesFailed != 1 {
-		t.Errorf("PushesFailed = %d, want 1", stats.PushesFailed)
+	if stats.PushFailures != 1 {
+		t.Errorf("PushFailures = %d, want 1", stats.PushFailures)
 	}
-	if stats.LastErrorTime.IsZero() {
-		t.Error("LastErrorTime not set after failure")
+	if !stats.LastSuccess.IsZero() {
+		t.Errorf("LastSuccess = %v, want zero after only a failure", stats.LastSuccess)
+	}
+	if stats.LastError == "" {
+		t.Error("LastError not set after failure")
+	}
+	if strings.Contains(stats.LastError, "test-secret-key") {
+		t.Error("LastError contains the ingestion key")
 	}
 }
 
@@ -275,8 +290,8 @@ func TestEndpointDerivation(t *testing.T) {
 		{"  http://local:8080/ ", "http://local:8080/api/v1/import/prometheus"},
 	}
 	for _, tt := range tests {
-		if got := (Config{DSN: tt.dsn}).endpoint(); got != tt.want {
-			t.Errorf("endpoint(%q) = %q, want %q", tt.dsn, got, tt.want)
+		if got := (Config{DSN: tt.dsn}).pushEndpoint(); got != tt.want {
+			t.Errorf("pushEndpoint(%q) = %q, want %q", tt.dsn, got, tt.want)
 		}
 	}
 }
