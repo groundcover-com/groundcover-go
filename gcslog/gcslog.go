@@ -24,25 +24,27 @@ import (
 	"log/slog"
 
 	groundcover "github.com/groundcover-com/groundcover-go"
+	gclogs "github.com/groundcover-com/groundcover-go/logs"
 )
 
 // Options configures a Handler. The zero value forwards info-and-above records
 // through the package-level groundcover client.
 type Options struct {
-	// Client is the groundcover client to emit through. When nil, the
-	// package-level client (configured via groundcover.Init) is used.
-	Client *groundcover.Client
+	// Client is the standalone logs emitter to use. Pass a *logs.Client or
+	// groundcover.Client.LogsClient(). When nil, the package-level aggregate
+	// client configured via groundcover.Init is used.
+	Client gclogs.Emitter
 	// Level is the minimum record level forwarded to groundcover. When nil it
 	// defaults to slog.LevelInfo. Records below it are dropped by Enabled
 	// before any allocation.
 	Level slog.Leveler
 }
 
-// NewHandler returns a slog.Handler that forwards records to groundcover's
-// log signal. The SDK must be initialized with Config.EnableLogs set to true;
-// otherwise forwarded records are no-ops. The handler never blocks on I/O and
-// never panics; delivery inherits the SDK's batching, retry, and overflow
-// behavior.
+// NewHandler returns a slog.Handler that forwards records to groundcover's log
+// signal. Pass a standalone *logs.Client in Options.Client, or leave it nil to
+// use the aggregate SDK initialized with Config.EnableLogs. The handler never
+// blocks on I/O and never panics; delivery inherits the client's batching,
+// retry, and overflow behavior.
 func NewHandler(opts Options) slog.Handler {
 	return &handler{opts: opts}
 }
@@ -53,7 +55,7 @@ type handler struct {
 	opts Options
 	// attrs are pre-flattened attributes accumulated via WithAttrs, with group
 	// prefixes already applied.
-	attrs groundcover.Attributes
+	attrs gclogs.Attributes
 	// prefix is the dotted group path accumulated via WithGroup, including a
 	// trailing dot when non-empty (e.g. "req.db.").
 	prefix string
@@ -72,7 +74,7 @@ func (h *handler) Enabled(_ context.Context, level slog.Level) bool {
 // asynchronous and failures surface through the SDK's self-metrics, never as
 // logging errors.
 func (h *handler) Handle(ctx context.Context, r slog.Record) error {
-	attrs := make(groundcover.Attributes, len(h.attrs)+r.NumAttrs())
+	attrs := make(gclogs.Attributes, len(h.attrs)+r.NumAttrs())
 	for k, v := range h.attrs {
 		attrs[k] = v
 	}
@@ -84,7 +86,7 @@ func (h *handler) Handle(ctx context.Context, r slog.Record) error {
 	if h.opts.Client != nil {
 		h.opts.Client.EmitLog(ctx, toLevel(r.Level), r.Message, attrs)
 	} else {
-		groundcover.EmitLog(ctx, toLevel(r.Level), r.Message, attrs)
+		groundcover.EmitLog(ctx, groundcover.Level(toLevel(r.Level)), r.Message, groundcover.Attributes(attrs))
 	}
 	return nil
 }
@@ -114,7 +116,7 @@ func (h *handler) WithGroup(name string) slog.Handler {
 }
 
 func (h *handler) clone() *handler {
-	attrs := make(groundcover.Attributes, len(h.attrs)+4)
+	attrs := make(gclogs.Attributes, len(h.attrs)+4)
 	for k, v := range h.attrs {
 		attrs[k] = v
 	}
@@ -124,7 +126,7 @@ func (h *handler) clone() *handler {
 // flatten resolves a slog.Attr into dotted-key entries of out. Groups recurse
 // with their name appended to the prefix; an empty-named group is inlined, and
 // empty non-group attrs are ignored, both per slog conventions.
-func flatten(out groundcover.Attributes, prefix string, a slog.Attr) {
+func flatten(out gclogs.Attributes, prefix string, a slog.Attr) {
 	v := a.Value.Resolve()
 	if v.Kind() == slog.KindGroup {
 		groupPrefix := prefix
@@ -145,17 +147,17 @@ func flatten(out groundcover.Attributes, prefix string, a slog.Attr) {
 // toLevel maps a slog level to a groundcover severity. Levels between the
 // named slog constants map to the nearest lower severity; slog has no fatal,
 // so anything at slog.LevelError+4 or above is treated as fatal.
-func toLevel(l slog.Level) groundcover.Level {
+func toLevel(l slog.Level) gclogs.Level {
 	switch {
 	case l < slog.LevelInfo:
-		return groundcover.LevelDebug
+		return gclogs.LevelDebug
 	case l < slog.LevelWarn:
-		return groundcover.LevelInfo
+		return gclogs.LevelInfo
 	case l < slog.LevelError:
-		return groundcover.LevelWarning
+		return gclogs.LevelWarning
 	case l < slog.LevelError+4:
-		return groundcover.LevelError
+		return gclogs.LevelError
 	default:
-		return groundcover.LevelFatal
+		return gclogs.LevelFatal
 	}
 }

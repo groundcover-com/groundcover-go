@@ -69,6 +69,32 @@ func main() {
 
 ### Logs — no agent, no tailer
 
+Use the public `logs` package when the program needs only log delivery:
+
+```go
+import "github.com/groundcover-com/groundcover-go/logs"
+
+client, err := logs.New(logs.Config{
+	DSN:          dsn,
+	IngestionKey: logsKey,
+	ServiceName:  "checkout",
+	Env:          "production",
+	Cluster:      "cluster-a",
+})
+if err != nil {
+	return err
+}
+defer client.CloseTimeout(5 * time.Second)
+
+client.Info(ctx, "order created", logs.Attributes{"order_id": "o-9"})
+```
+
+`logs.Client` independently owns its queue, batching, retries, statistics, and
+shutdown. It does not initialize error tracking or any other signal.
+
+For programs already using the aggregate SDK, `EnableLogs: true` composes the
+same standalone client behind the root convenience API:
+
 With `EnableLogs: true`, the SDK delivers application logs straight to
 groundcover's dedicated `/json/logs` intake as NDJSON — no local agent or
 tailer. Logs travel on their **own bounded queue**, so log volume never evicts
@@ -109,6 +135,12 @@ import "github.com/groundcover-com/groundcover-go/gcslog"
 
 logger := slog.New(gcslog.NewHandler(gcslog.Options{})) // uses the Init'd client
 logger.Info("order created", "order_id", "o-9")         // delivered to groundcover
+```
+
+With a standalone client, pass it explicitly:
+
+```go
+logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client}))
 ```
 
 Records inherit identity/attributes from the request scope (`SetUser` /
@@ -169,6 +201,7 @@ for wiring details, including middleware ordering.
 | ------ | ----------- | ---- |
 | net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` | stdlib only (part of core) |
 | slog bridge (logs) | `github.com/groundcover-com/groundcover-go/gcslog` | stdlib only (part of core) |
+| standalone logs client | `github.com/groundcover-com/groundcover-go/logs` | stdlib only (part of core) |
 | Echo middleware | `github.com/groundcover-com/groundcover-go/contrib/echo` | `github.com/labstack/echo/v4` |
 | FastHTTP middleware | `github.com/groundcover-com/groundcover-go/contrib/fasthttp` | `github.com/valyala/fasthttp` |
 | Fiber middleware | `github.com/groundcover-com/groundcover-go/contrib/fiber` | `github.com/gofiber/fiber/v2` |

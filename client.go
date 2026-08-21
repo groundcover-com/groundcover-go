@@ -14,6 +14,7 @@ import (
 	"github.com/groundcover-com/groundcover-go/internal/safeguard"
 	"github.com/groundcover-com/groundcover-go/internal/selfmetrics"
 	"github.com/groundcover-com/groundcover-go/internal/transport"
+	gclogs "github.com/groundcover-com/groundcover-go/logs"
 )
 
 // eventType is the only event type emitted in v1 (error tracking).
@@ -37,12 +38,7 @@ type Client struct {
 	ring   *ringbuf.Buffer[*Event]
 	worker *transport.Worker[*Event]
 
-	// Log pipeline: a separate bounded buffer and worker so log volume can
-	// never evict or delay error events. Constructed only when EnableLogs is
-	// set; logMetrics always exists so LogStats is safe to call.
-	logMetrics *selfmetrics.Metrics
-	logRing    *ringbuf.Buffer[*Log]
-	logWorker  *transport.Worker[*Log]
+	logClient *gclogs.Client
 
 	debug    bool
 	debugOut io.Writer
@@ -60,7 +56,7 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	}
 	resolved := cfg.withDefaults()
 
-	c := &Client{metrics: selfmetrics.New(), logMetrics: selfmetrics.New()}
+	c := &Client{metrics: selfmetrics.New()}
 	c.cfg.Store(&resolved)
 	if resolved.Disabled {
 		c.disabled = true
@@ -86,7 +82,6 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	c.ring = ringbuf.New[*Event](resolved.MaxQueue, resolved.MaxBytes, estimateSize)
 
 	eventSender := sender
-	logSender := sender
 	if eventSender == nil {
 		client := resolved.HTTPClient
 		if client == nil {
@@ -97,14 +92,6 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 			IngestionKey: resolved.IngestionKey,
 			UserAgent:    c.res.userAgent,
 			Client:       client,
-		})
-		logSender = transport.NewHTTPSender(transport.HTTPConfig{
-			Endpoint:           resolved.logsEndpoint(),
-			IngestionKey:       firstNonEmpty(resolved.LogsIngestionKey, resolved.IngestionKey),
-			UserAgent:          c.res.userAgent,
-			Client:             client,
-			ContentType:        "application/x-ndjson",
-			DisableCompression: true,
 		})
 	}
 
@@ -126,12 +113,29 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	c.worker.Start()
 
 	if resolved.EnableLogs {
-		c.logRing = ringbuf.New[*Log](resolved.MaxQueue, resolved.MaxBytes, estimateLogSize)
-		encodeLogs := func(items []*Log) ([]byte, error) { return encodeLogBatch(items, res, resolved.LogSource) }
-		c.logWorker = transport.NewWorker[*Log](
-			c.logRing, logSender, encodeLogs, metricsObserver{m: c.logMetrics}, c.throttle, c.onPanic, workerCfg,
-		)
-		c.logWorker.Start()
+		logClient, err := gclogs.New(gclogs.Config{
+			DSN:              resolved.DSN,
+			IngestionKey:     firstNonEmpty(resolved.LogsIngestionKey, resolved.IngestionKey),
+			ServiceName:      c.res.serviceName,
+			Env:              c.res.env,
+			Cluster:          c.res.cluster,
+			Source:           resolved.LogSource,
+			MaxQueue:         resolved.MaxQueue,
+			MaxBytes:         resolved.MaxBytes,
+			BatchSize:        resolved.BatchSize,
+			FlushInterval:    resolved.FlushInterval,
+			MaxBatchBytes:    resolved.MaxBatchBytes,
+			MaxRetries:       resolved.MaxRetries,
+			RetryMax:         resolved.RetryMax,
+			RateLimitBackoff: resolved.RateLimitBackoff,
+			BeforeSend:       adaptBeforeSendLog(resolved.BeforeSendLog, Service{Name: c.res.serviceName, Version: c.res.release}),
+			Hasher:           resolved.Hasher,
+			HTTPClient:       resolved.HTTPClient,
+		})
+		if err != nil {
+			return nil, err
+		}
+		c.logClient = logClient
 	}
 	return c, nil
 }
@@ -382,8 +386,8 @@ func (c *Client) Flush(ctx context.Context) error {
 		return nil
 	}
 	err := c.worker.Flush(ctx)
-	if c.logWorker != nil {
-		if logErr := c.logWorker.Flush(ctx); err == nil {
+	if c.logClient != nil {
+		if logErr := c.logClient.Flush(ctx); err == nil {
 			err = logErr
 		}
 	}
@@ -396,8 +400,8 @@ func (c *Client) Close(ctx context.Context) error {
 		return nil
 	}
 	err := c.worker.Close(ctx)
-	if c.logWorker != nil {
-		if logErr := c.logWorker.Close(ctx); err == nil {
+	if c.logClient != nil {
+		if logErr := c.logClient.Close(ctx); err == nil {
 			err = logErr
 		}
 	}

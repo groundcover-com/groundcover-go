@@ -10,7 +10,7 @@ never enter the core library's `go.sum`.
 | [`cli`](cli) | batch/worker: capture at boundaries with per-call options, every severity level, request scope, `Recover` + `CaptureRecovered`, and the `Logger`/`OnDrop`/`Debug` hooks; prints events locally with no backend | `go run ./cli` |
 | [`before-send`](before-send) | keep PII out and control volume: `BeforeSend` redacts emails/secrets and drops noisy events, `Hasher` pseudonymizes identity | `go run ./before-send` |
 | [`explicit-client`](explicit-client) | use an explicit `*Client` (libraries/multi-tenant) instead of the global; wire it into the net/http middleware, run a worker under an isolated scope, and read back `Stats` | `go run ./explicit-client` |
-| [`logs`](logs) | direct log delivery (`EnableLogs`): the emission API (`LogInfo`/`LogErrorf`) and the stdlib slog bridge (`gcslog`), sharing one client and request scope — no agent or tailer | `go run ./logs` |
+| [`logs`](logs) | standalone `logs.Client` (no error SDK), direct emission, and the stdlib slog bridge sharing one client — no agent or tailer | `go run ./logs` |
 | [`logs-roundtrip`](logs-roundtrip) | **end-to-end logs**: submit one direct and one slog-bridge record to `/json/logs`, then query the logs API and verify both | `go run ./logs-roundtrip` |
 | [`nethttp`](nethttp) | `net/http` middleware (panic recovery + per-request scope) | `go run ./nethttp` |
 | [`gin`](gin) | Gin middleware (panic recovery + `c.Error` capture) | `go run ./gin` |

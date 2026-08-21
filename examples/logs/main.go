@@ -1,7 +1,6 @@
-// Command logs shows direct log delivery: no agent, sidecar, or file tailer.
-// It demonstrates both layers of the log signal — the emission API
-// (LogInfo/LogErrorf) and the stdlib slog bridge (gcslog) — sharing one
-// client, one pipeline, and one request scope.
+// Command logs shows the standalone logs client: no error-tracking client,
+// agent, sidecar, or file tailer. It demonstrates both the direct API and the
+// stdlib slog bridge sharing one logs.Client.
 //
 //	GC_DSN=https://<ingestion-origin> GC_INGESTION_KEY=<key> go run .
 //
@@ -16,42 +15,43 @@ import (
 	"os"
 	"time"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"github.com/groundcover-com/groundcover-go/gcslog"
+	"github.com/groundcover-com/groundcover-go/logs"
 )
 
 func main() {
-	if err := gc.Init(gc.Config{
-		DSN:              envOr("GC_DSN", "https://example.invalid"),
-		IngestionKey:     os.Getenv("GC_INGESTION_KEY"),
-		LogsIngestionKey: os.Getenv("GC_LOGS_INGESTION_KEY"),
-		ServiceName:      "examples-logs",
-		Env:              "examples",
-		Cluster:          envOr("GC_CLUSTER", "examples"),
-		EnableLogs:       true, // the log signal is opt-in
-	}); err != nil {
+	key := os.Getenv("GC_LOGS_INGESTION_KEY")
+	if key == "" {
+		key = os.Getenv("GC_INGESTION_KEY")
+	}
+	client, err := logs.New(logs.Config{
+		DSN:          envOr("GC_DSN", "https://example.invalid"),
+		IngestionKey: key,
+		ServiceName:  "examples-logs",
+		Env:          "examples",
+		Cluster:      envOr("GC_CLUSTER", "examples"),
+	})
+	if err != nil {
 		fatalf("init: %v", err)
 	}
-	defer func() { _ = gc.CloseTimeout(5 * time.Second) }()
+	defer func() { _ = client.CloseTimeout(5 * time.Second) }()
 
-	// Identity and attributes set on the context scope are inherited by every
-	// log record captured with that context — same as error events.
-	ctx := gc.SetUser(context.Background(), gc.User{ID: "u-123", Organization: "acme"})
+	ctx := context.Background()
 
-	// Layer 1: the emission API. Push records directly.
-	gc.LogInfo(ctx, "order created", gc.Attributes{"order_id": "o-9", "amount": 42.5})
-	gc.LogErrorf(ctx, "charge %s failed after %d tries", "ch_1", 3)
+	// Layer 1: push records directly through the standalone client.
+	client.Info(ctx, "order created", logs.Attributes{"order_id": "o-9", "amount": 42.5})
+	client.Errorf(ctx, "charge %s failed after %d tries", "ch_1", 3)
 
 	// Layer 2: the slog bridge. Existing slog call sites work unchanged; the
 	// handler forwards records through the same client. Group/attr structure
 	// becomes dotted attribute keys (http.status).
-	logger := slog.New(gcslog.NewHandler(gcslog.Options{}))
+	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client}))
 	logger.Info("rate limit near", slog.Group("http", slog.Int("status", 429)))
 
-	if err := gc.FlushTimeout(5 * time.Second); err != nil {
+	if err := client.FlushTimeout(5 * time.Second); err != nil {
 		fmt.Fprintf(os.Stderr, "flush: %v\n", err)
 	}
-	fmt.Printf("log pipeline stats: %+v\n", gc.GlobalLogStats())
+	fmt.Printf("log pipeline stats: %+v\n", client.Stats())
 }
 
 func envOr(key, fallback string) string {

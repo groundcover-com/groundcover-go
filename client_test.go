@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -13,12 +15,35 @@ import (
 func mustClient(t *testing.T, cfg Config, sender *testutil.MockSender) *Client {
 	t.Helper()
 	cfg.DSN = "https://example.invalid"
+	if cfg.EnableLogs && cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			if err := sender.Send(req.Context(), body); err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(http.NoBody),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		})}
+	}
 	c, err := newClient(cfg, sender)
 	if err != nil {
 		t.Fatalf("newClient: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close(context.Background()) })
 	return c
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 // decodePayload unmarshals the single batch body the mock sender received.

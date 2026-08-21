@@ -79,7 +79,7 @@ func TestHandlerForwardsRecords(t *testing.T) {
 	sink := &capture{}
 	client := newTestClient(t, sink)
 
-	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client}))
+	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client.LogsClient()}))
 	logger.Info("order created", "order_id", "o-9", slog.Int("qty", 3))
 	logger.Warn("rate limit near", slog.Group("http", slog.Int("status", 429)))
 
@@ -111,7 +111,7 @@ func TestHandlerWithAttrsAndGroups(t *testing.T) {
 	sink := &capture{}
 	client := newTestClient(t, sink)
 
-	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client})).
+	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client.LogsClient()})).
 		With("service_tier", "gold").
 		WithGroup("req").
 		With("method", "GET")
@@ -136,7 +136,7 @@ func TestHandlerMinimumLevel(t *testing.T) {
 	sink := &capture{}
 	client := newTestClient(t, sink)
 
-	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client, Level: slog.LevelWarn}))
+	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client.LogsClient(), Level: slog.LevelWarn}))
 	logger.Info("filtered out")
 	logger.Debug("also filtered")
 	logger.Warn("kept")

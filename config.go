@@ -175,12 +175,3 @@ func (c Config) endpoint() string {
 	}
 	return dsn + ingestPath
 }
-
-// logsEndpoint returns the dedicated NDJSON logs intake URL.
-func (c Config) logsEndpoint() string {
-	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
-	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
-		dsn = "https://" + dsn
-	}
-	return dsn + "/json/logs"
-}

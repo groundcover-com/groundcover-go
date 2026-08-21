@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	gc "github.com/groundcover-com/groundcover-go"
 	"github.com/groundcover-com/groundcover-go/examples/internal/e2e"
 	"github.com/groundcover-com/groundcover-go/gcslog"
+	"github.com/groundcover-com/groundcover-go/logs"
 )
 
 const flushTimeout = 10 * time.Second
@@ -49,26 +49,24 @@ func run() error {
 		logsKey = env.IngestionKey
 	}
 
-	if err := gc.Init(gc.Config{
-		DSN:              env.DSN,
-		IngestionKey:     env.IngestionKey,
-		LogsIngestionKey: logsKey,
-		ServiceName:      "groundcover-go-logs-roundtrip",
-		Env:              "examples",
-		Cluster:          "examples",
-		Release:          "1.0.0",
-		EnableLogs:       true,
-		LogSource:        "groundcover-go",
-		FlushInterval:    time.Second,
-	}); err != nil {
+	client, err := logs.New(logs.Config{
+		DSN:           env.DSN,
+		IngestionKey:  logsKey,
+		ServiceName:   "groundcover-go-logs-roundtrip",
+		Env:           "examples",
+		Cluster:       "examples",
+		Source:        "groundcover-go",
+		FlushInterval: time.Second,
+	})
+	if err != nil {
 		return fmt.Errorf("init: %w", err)
 	}
-	defer func() { _ = gc.CloseTimeout(flushTimeout) }()
+	defer func() { _ = client.CloseTimeout(flushTimeout) }()
 
-	ctx := gc.SetUser(context.Background(), gc.User{ID: "logs-roundtrip-user", Organization: "examples"})
+	ctx := context.Background()
 
 	// Layer 1: the direct emission API.
-	gc.LogError(ctx, "synthetic emission log "+testID, gc.Attributes{
+	client.Error(ctx, "synthetic emission log "+testID, logs.Attributes{
 		"gc.test_id":     testID,
 		"example.layer":  "emission",
 		"example.int":    7,
@@ -78,17 +76,17 @@ func run() error {
 	})
 
 	// Layer 2: the slog bridge, with group flattening.
-	logger := slog.New(gcslog.NewHandler(gcslog.Options{}))
+	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client}))
 	logger.WarnContext(ctx, "synthetic bridge log "+testID,
 		"gc.test_id", testID,
 		"example.layer", "slog",
 		slog.Group("http", slog.Int("status", 429)),
 	)
 
-	if err := gc.FlushTimeout(flushTimeout); err != nil {
+	if err := client.FlushTimeout(flushTimeout); err != nil {
 		return fmt.Errorf("flush: %w", err)
 	}
-	stats := gc.GlobalLogStats()
+	stats := client.Stats()
 	fmt.Printf("logs-roundtrip: submitted (captured=%d sent=%d), polling logs API for read-back...\n", stats.Captured, stats.Sent)
 	if stats.Sent != 2 {
 		return fmt.Errorf("expected 2 sent log records, stats=%+v", stats)

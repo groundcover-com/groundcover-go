@@ -295,6 +295,21 @@ Levels: `LevelDebug`, `LevelInfo`, `LevelWarning`, `LevelError`, `LevelFatal`.
 
 ## 6b. Application logs (opt-in, no agent or tailer)
 
+If the program only needs logs, use the standalone public client; it owns its
+own queue, delivery, statistics, and shutdown without initializing error
+tracking:
+
+```go
+client, err := logs.New(logs.Config{
+	DSN: dsn, IngestionKey: logsKey,
+	ServiceName: "checkout", Env: "production", Cluster: "cluster-a",
+})
+defer client.CloseTimeout(5 * time.Second)
+client.Info(ctx, "order created", logs.Attributes{"order_id": id})
+```
+
+Import it from `github.com/groundcover-com/groundcover-go/logs`.
+
 Set `EnableLogs: true` in the config to deliver application logs directly to
 groundcover. Logs travel on their own bounded queue, so log volume never evicts
 error events. Set `LogsIngestionKey` when `/json/logs` uses a different key
