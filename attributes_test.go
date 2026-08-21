@@ -2,6 +2,7 @@ package groundcover
 
 import (
 	"encoding/json"
+	"math"
 	"net"
 	"testing"
 )
@@ -42,6 +43,10 @@ func TestSanitizeValueTypes(t *testing.T) {
 		{"string", "x", "x"},
 		{"int", 5, 5},
 		{"float", 1.5, 1.5},
+		{"float32 NaN", float32(math.NaN()), "NaN"},
+		{"float32 +Inf", float32(math.Inf(1)), "+Inf"},
+		{"float64 NaN", math.NaN(), "NaN"},
+		{"float64 -Inf", math.Inf(-1), "-Inf"},
 		{"bool", true, true},
 		{"nil", nil, nil},
 		{"stringer", stringerType{s: "hi"}, "hi"},

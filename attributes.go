@@ -2,6 +2,7 @@ package groundcover
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 
 	"github.com/groundcover-com/groundcover-go/internal/safefmt"
@@ -64,8 +65,17 @@ func sanitizeValue(v any, depth int) any {
 	switch val := v.(type) {
 	case string, bool,
 		int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64:
+		uint, uint8, uint16, uint32, uint64:
+		return val
+	case float32:
+		if math.IsNaN(float64(val)) || math.IsInf(float64(val), 0) {
+			return fmt.Sprint(val)
+		}
+		return val
+	case float64:
+		if math.IsNaN(val) || math.IsInf(val, 0) {
+			return fmt.Sprint(val)
+		}
 		return val
 	case error:
 		return val.Error()

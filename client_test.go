@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,6 +112,62 @@ func TestCaptureErrorRoundTrip(t *testing.T) {
 	}
 	if c.Stats().Sent != 1 {
 		t.Fatalf("expected 1 sent, stats=%+v", c.Stats())
+	}
+}
+
+func TestNonFiniteAttributeDoesNotPoisonEventBatch(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{BatchSize: 10, FlushInterval: time.Hour}, sender)
+
+	c.CaptureMessage(context.Background(), "non-finite", LevelInfo,
+		WithAttributes(Attributes{"ratio": math.NaN(), "limit": math.Inf(1)}))
+	c.CaptureMessage(context.Background(), "healthy", LevelInfo)
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	payload := decodePayload(t, sender)
+	if len(payload.Events) != 2 {
+		t.Fatalf("sent %d events, want both records", len(payload.Events))
+	}
+	metadata := payload.Events[0].Attributes.ErrorMetadata
+	if metadata["ratio"] != "NaN" || metadata["limit"] != "+Inf" {
+		t.Fatalf("non-finite attributes = ratio:%v limit:%v, want strings", metadata["ratio"], metadata["limit"])
+	}
+	if stats := c.Stats(); stats.Sent != 2 || stats.DroppedSendExhausted != 0 {
+		t.Fatalf("Stats = %+v, want both events sent without a batch drop", stats)
+	}
+}
+
+func TestEventLargerThanBatchLimitIsRejectedBeforeQueue(t *testing.T) {
+	sender := &testutil.MockSender{}
+	var dropped int
+	c := mustClient(t, Config{
+		MaxBytes:      1 << 20,
+		MaxBatchBytes: 4 << 10,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+		OnDrop:        func(n int) { dropped += n },
+	}, sender)
+
+	// NUL expands to six bytes in JSON. The old raw-byte estimate accepted
+	// this event and PopBatch then bypassed MaxBatchBytes for the first item.
+	c.CaptureMessage(context.Background(), strings.Repeat("\x00", 2<<10), LevelInfo)
+	c.CaptureMessage(context.Background(), "healthy", LevelInfo)
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	payload := decodePayload(t, sender)
+	if len(payload.Events) != 1 || payload.Events[0].Attributes.ErrorMessage != "healthy" {
+		t.Fatalf("payload contains %d events, want only the healthy event", len(payload.Events))
+	}
+	stats := c.Stats()
+	if stats.Captured != 1 || stats.Sent != 1 || stats.DroppedOverflow != 1 || dropped != 1 {
+		t.Fatalf("Stats = %+v OnDrop=%d, want one accepted and one oversized drop", stats, dropped)
+	}
+	if len(sender.Bodies()[0]) > 4<<10 {
+		t.Fatalf("request body = %d bytes, exceeds MaxBatchBytes", len(sender.Bodies()[0]))
 	}
 }
 

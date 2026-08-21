@@ -107,7 +107,7 @@ func TestEncodeBatchIncludesTitle(t *testing.T) {
 	}
 }
 
-func TestEstimateSizeAccountsForNestedAttributes(t *testing.T) {
+func TestEncodedEventSizeAccountsForNestedAttributes(t *testing.T) {
 	plain := &Event{Type: "exception", ErrorMessage: "x"}
 	rich := &Event{
 		Type:         "exception",
@@ -120,27 +120,26 @@ func TestEstimateSizeAccountsForNestedAttributes(t *testing.T) {
 			"empty":  nil,
 		},
 	}
-	if estimateSize(rich) <= estimateSize(plain) {
-		t.Fatalf("nested attributes should increase the estimate (%d vs %d)", estimateSize(rich), estimateSize(plain))
+	res := resource{}
+	if encodedEventSize(rich, res) <= encodedEventSize(plain, res) {
+		t.Fatalf("nested attributes should increase the encoded size (%d vs %d)",
+			encodedEventSize(rich, res), encodedEventSize(plain, res))
 	}
 }
 
-func TestEstimateValueSize(t *testing.T) {
-	if estimateValueSize("hello") != len("hello") {
-		t.Fatal("string size should be its length")
+func TestEncodedEventSizeIsExactAndIncludesJSONEscaping(t *testing.T) {
+	event := &Event{
+		Type:         "exception",
+		ErrorMessage: "contains\x00control",
+		Attributes:   Attributes{"value": "\x00\x01\x02"},
 	}
-	if estimateValueSize(true) != scalarSizeEstimate {
-		t.Fatal("scalar size should be the scalar estimate")
+	res := resource{}
+	body, err := encodeBatch([]*Event{event}, res)
+	if err != nil {
+		t.Fatalf("encodeBatch: %v", err)
 	}
-	nested := map[string]any{"k": "vv"}
-	if got := estimateValueSize(nested); got <= len("k") {
-		t.Fatalf("map size should include keys and values, got %d", got)
-	}
-	if got := estimateValueSize(Attributes{"k": "vv"}); got <= len("k") {
-		t.Fatalf("Attributes size should include keys and values, got %d", got)
-	}
-	if estimateValueSize([]any{"a", "bb"}) < 2+len("a")+len("bb") {
-		t.Fatal("slice size should sum element sizes")
+	if got := encodedEventSize(event, res); got != len(body) {
+		t.Fatalf("encodedEventSize = %d, want exact body size %d", got, len(body))
 	}
 }
 

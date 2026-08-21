@@ -1,10 +1,9 @@
 package groundcover
 
-import "encoding/json"
-
-// scalarSizeEstimate is the assumed byte cost of a non-string scalar attribute
-// value (number/bool) in the buffer's byte budget.
-const scalarSizeEstimate = 16
+import (
+	"encoding/json"
+	"math"
+)
 
 const (
 	wireKeyLevel       = "level"
@@ -144,6 +143,13 @@ func setIfNonEmpty(m map[string]any, k, v string) {
 
 // toWireEvent converts an internal Event to its wire representation.
 func toWireEvent(e *Event, res resource) wireEvent {
+	return buildWireEvent(e, res, newSpanID(), newTraceID())
+}
+
+// buildWireEvent converts e using the supplied fixed-width IDs. Keeping ID
+// generation outside lets sizing use placeholders instead of reading
+// crypto/rand on the caller's capture path.
+func buildWireEvent(e *Event, res resource, spanID, traceID string) wireEvent {
 	frames := make([]wireFrame, 0, len(e.Stacktrace))
 	for _, f := range e.Stacktrace {
 		frames = append(frames, wireFrame{
@@ -158,9 +164,9 @@ func toWireEvent(e *Event, res resource) wireEvent {
 		Level:        string(e.Level),
 		Timestamp:    e.Timestamp.UnixNano(),
 		ID:           e.ID,
-		SpanID:       newSpanID(),
+		SpanID:       spanID,
 		ParentSpanID: "",
-		TraceID:      newTraceID(),
+		TraceID:      traceID,
 		Attributes: wireAttributes{
 			ErrorType:        e.ErrorType,
 			ErrorMessage:     e.ErrorMessage,
@@ -184,47 +190,25 @@ func encodeBatch(events []*Event, res resource) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-// estimateSize returns a cheap byte estimate of an event for the buffer's byte
-// budget. It intentionally over- rather than under-estimates.
-func estimateSize(e *Event) int {
-	const base = 256
-	const perFrameOverhead = 24
-	size := base + len(e.Type) + len(e.ErrorType) + len(e.ErrorMessage) + len(e.Fingerprint) + len(e.Title)
-	for _, f := range e.Stacktrace {
-		size += len(f.Function) + len(f.File) + perFrameOverhead
+// encodedEventSize returns the exact request size for e when sent by itself.
+// Using that as the ring-buffer size safely overcounts a multi-event request,
+// because each per-event measurement includes the shared payload envelope and
+// session attributes. Marshal failures are treated as oversized so one bad
+// event cannot poison and drop an otherwise healthy batch.
+func encodedEventSize(e *Event, res resource) int {
+	const (
+		placeholderSpanID  = "0000000000000000"
+		placeholderTraceID = "00000000000000000000000000000000"
+	)
+	payload := wirePayload{
+		SessionAttributes: res.sessionAttributes(),
+		Events: []wireEvent{
+			buildWireEvent(e, res, placeholderSpanID, placeholderTraceID),
+		},
 	}
-	for k, v := range e.Attributes {
-		size += len(k) + estimateValueSize(v)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return math.MaxInt
 	}
-	size += len(e.User.ID) + len(e.User.Email) + len(e.User.Name) + len(e.User.Organization)
-	return size
-}
-
-func estimateValueSize(v any) int {
-	switch val := v.(type) {
-	case string:
-		return len(val)
-	case nil:
-		return scalarSizeEstimate
-	case map[string]any:
-		return estimateMapSize(val)
-	case Attributes:
-		return estimateMapSize(val)
-	case []any:
-		total := 2
-		for _, item := range val {
-			total += estimateValueSize(item)
-		}
-		return total
-	default:
-		return scalarSizeEstimate
-	}
-}
-
-func estimateMapSize(m map[string]any) int {
-	total := 2
-	for k, item := range m {
-		total += len(k) + estimateValueSize(item)
-	}
-	return total
+	return len(body)
 }

@@ -87,7 +87,10 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	c.debug = resolved.Debug
 	c.debugOut = os.Stderr
 
-	c.ring = ringbuf.New[*Event](resolved.MaxQueue, resolved.MaxBytes, estimateSize)
+	res := c.res
+	c.ring = ringbuf.New[*Event](resolved.MaxQueue, resolved.MaxBytes, func(event *Event) int {
+		return encodedEventSize(event, res)
+	})
 
 	eventSender := sender
 	if eventSender == nil {
@@ -103,7 +106,6 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 		})
 	}
 
-	res := c.res
 	encode := func(items []*Event) ([]byte, error) { return encodeBatch(items, res) }
 
 	workerCfg := transport.WorkerConfig{
@@ -329,7 +331,6 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 		c.writeDebug(e)
 	}
 
-	c.metrics.IncCaptured()
 	c.enqueue(cfg, e)
 }
 
@@ -354,13 +355,21 @@ func (c *Client) runBeforeSend(fn func(*Event) *Event, e *Event) (out *Event) {
 // captured after Close are discarded rather than buffered with nothing left to
 // drain them.
 func (c *Client) enqueue(cfg *Config, e *Event) {
+	eventBytes := encodedEventSize(e, c.res)
+	if eventBytes > cfg.MaxBytes || eventBytes > cfg.MaxBatchBytes {
+		c.metrics.AddDropped(selfmetrics.DropOverflow, 1)
+		c.fireOnDrop(cfg.OnDrop, 1)
+		return
+	}
+
 	c.lifecycleMu.RLock()
 	defer c.lifecycleMu.RUnlock()
 	if c.closing.Load() {
 		c.metrics.AddDropped(selfmetrics.DropShutdown, 1)
 		return
 	}
-	dropped := c.ring.Push(e)
+	c.metrics.IncCaptured()
+	dropped := c.ring.PushSized(e, eventBytes)
 	if dropped > 0 {
 		c.metrics.AddDropped(selfmetrics.DropOverflow, int64(dropped))
 		c.fireOnDrop(cfg.OnDrop, dropped)
