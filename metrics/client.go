@@ -217,7 +217,10 @@ func (c *Client) Start(ctx context.Context) (StopFunc, error) {
 		c.runLoop(workerCtx, stopLoop)
 	}, c.onPanic)
 
-	var retire, finalPush sync.Once
+	var retire sync.Once
+	finalPushGate := make(chan struct{}, 1)
+	finalPushGate <- struct{}{}
+	finalPushDone := false // guarded by finalPushGate
 	stop := func(stopCtx context.Context) error {
 		retire.Do(func() { close(stopLoop) })
 		select {
@@ -227,12 +230,30 @@ func (c *Client) Start(ctx context.Context) (StopFunc, error) {
 			cancel()
 			return stopCtx.Err()
 		}
+		// When the worker had already exited, both branches above may have
+		// been ready. Do not let select choose done and consume the one final
+		// push with an already-cancelled context.
+		if err := stopCtx.Err(); err != nil {
+			return err
+		}
 		// A push model has no later scrape, so whatever accumulated since the
 		// last interval is delivered here or lost. The push is bounded by the
-		// caller's context and only runs on the first Stop. Its failure is
-		// reported through OnError and Stats like any other push, not as a
-		// stop error: the worker did stop.
-		finalPush.Do(func() { _ = c.pushAndReport(stopCtx) })
+		// caller's context and runs once successfully. A Stop whose context
+		// expires during the push leaves it retryable.
+		select {
+		case <-finalPushGate:
+		case <-stopCtx.Done():
+			return stopCtx.Err()
+		}
+		defer func() { finalPushGate <- struct{}{} }()
+		if finalPushDone {
+			return nil
+		}
+		_ = c.pushAndReport(stopCtx)
+		if err := stopCtx.Err(); err != nil {
+			return err
+		}
+		finalPushDone = true
 		return nil
 	}
 	return stop, nil

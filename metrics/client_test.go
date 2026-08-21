@@ -630,6 +630,54 @@ func TestStopWithExpiredContextAbandonsTheInFlightPush(t *testing.T) {
 	}
 }
 
+// If the parent context already stopped the worker, both the worker's done
+// channel and an expired Stop context are ready. The expired call must not
+// consume the one final push and make a healthy retry a no-op.
+func TestExpiredStopAfterWorkerExitLeavesFinalPushRetryable(t *testing.T) {
+	cs := newCaptureServer(t)
+	reg := NewRegistry()
+	cfg := testConfig(cs)
+	cfg.Interval = time.Hour
+	client, err := New(cfg, reg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	parent, cancelParent := context.WithCancel(context.Background())
+	stop, err := client.Start(parent)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for cs.count() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancelParent()
+	for client.Stats().WorkerRunning && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	reg.Gauge("after_worker_exit", nil).Set(1)
+	before := cs.count()
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := stop(expired); !errors.Is(err, context.Canceled) {
+		t.Fatalf("stop(expired) = %v, want context.Canceled", err)
+	}
+	if got := cs.count(); got != before {
+		t.Fatalf("%d pushes after expired Stop, want %d", got, before)
+	}
+
+	if err := stop(context.Background()); err != nil {
+		t.Fatalf("stop retry: %v", err)
+	}
+	if got := cs.count(); got != before+1 {
+		t.Fatalf("%d pushes after retry, want %d", got, before+1)
+	}
+	if body := cs.last().body; !strings.Contains(body, "after_worker_exit{") {
+		t.Fatalf("retry did not deliver final sample:\n%s", body)
+	}
+}
+
 func TestPushesNeverOverlap(t *testing.T) {
 	var inFlight, maxInFlight atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
