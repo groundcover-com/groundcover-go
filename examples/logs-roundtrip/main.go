@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,7 +27,13 @@ import (
 	"github.com/groundcover-com/groundcover-go/logs"
 )
 
-const flushTimeout = 10 * time.Second
+const (
+	flushTimeout = 10 * time.Second
+	// serviceName and envName identify the roundtrip's records both when
+	// emitting and when querying them back from the logs API.
+	serviceName = "groundcover-go-logs-roundtrip"
+	envName     = "examples"
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -52,9 +59,9 @@ func run() error {
 	client, err := logs.New(logs.Config{
 		DSN:           env.DSN,
 		IngestionKey:  logsKey,
-		ServiceName:   "groundcover-go-logs-roundtrip",
-		Env:           "examples",
-		Cluster:       "examples",
+		ServiceName:   serviceName,
+		Env:           envName,
+		Cluster:       envName,
 		Source:        "groundcover-go",
 		FlushInterval: time.Second,
 	})
@@ -118,7 +125,7 @@ func queryLogs(env e2e.Environment) ([]json.RawMessage, error) {
 		"group": map[string]any{
 			"operator": "and",
 			"conditions": []map[string]any{{
-				"filters": []map[string]any{{"op": "match", "value": "groundcover-go-logs-roundtrip"}},
+				"filters": []map[string]any{{"op": "match", "value": serviceName}},
 				"key":     "service",
 				"origin":  "root",
 				"type":    "string",
@@ -236,9 +243,9 @@ func verifyLogs(rows []json.RawMessage, testID string) error {
 		return fmt.Errorf("bridge level = %q, want warning", lvl)
 	}
 	for key, want := range map[string]string{
-		"service": "groundcover-go-logs-roundtrip",
-		"cluster": "examples",
-		"env":     "examples",
+		"service": serviceName,
+		"cluster": envName,
+		"env":     envName,
 		"source":  "groundcover-go",
 	} {
 		if got := rowString(emission, key); got != want {
@@ -247,7 +254,7 @@ func verifyLogs(rows []json.RawMessage, testID string) error {
 	}
 	if !strings.Contains(string(mustJSON(emission)), testID) ||
 		!strings.Contains(string(mustJSON(bridge)), testID) {
-		return fmt.Errorf("stored records missing test needle")
+		return errors.New("stored records missing test needle")
 	}
 	return nil
 }
