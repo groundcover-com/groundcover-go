@@ -36,6 +36,10 @@ const (
 	// relocatedValue is sent under the reserved "text" key and must come back
 	// as an "attributes.text" attribute, with the message left alone.
 	relocatedValue = "reserved key relocation"
+	// Column kinds and origins the logs API query language uses.
+	typeString       = "string"
+	originRoot       = "root"
+	originAdditional = "additional"
 )
 
 func main() {
@@ -121,6 +125,13 @@ func run() error {
 	return nil
 }
 
+// selector names an attribute column the logs API returns with each row.
+type selector struct {
+	Key    string `json:"key"`
+	Origin string `json:"origin"`
+	Type   string `json:"type"`
+}
+
 // queryLogs searches by the service header against the logs API. The endpoint
 // streams SSE-style lines; each data: line carries a JSON object with a "logs"
 // array, the last one marked done.
@@ -134,16 +145,16 @@ func queryLogs(env e2e.Environment) ([]json.RawMessage, error) {
 			"conditions": []map[string]any{{
 				"filters": []map[string]any{{"op": "match", "value": serviceName}},
 				"key":     "service",
-				"origin":  "root",
-				"type":    "string",
+				"origin":  originRoot,
+				"type":    typeString,
 			}},
 		},
 		"limit": 20, "skip": 0,
 		"sortBy": "timestamp", "sortOrder": "desc",
 		// Attributes are only returned when selected by name.
-		"selectors": []map[string]any{
-			{"key": "attributes.text", "origin": "additional", "type": "string"},
-			{"key": "text", "origin": "additional", "type": "string"},
+		"selectors": []selector{
+			{Key: "attributes.text", Origin: originAdditional, Type: typeString},
+			{Key: "text", Origin: originAdditional, Type: typeString},
 		},
 		"optimizeSearch": true,
 	})
