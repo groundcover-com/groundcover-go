@@ -268,4 +268,33 @@ func TestRegistryRejectsHistogramDerivedNameConflicts(t *testing.T) {
 			t.Fatal("Err = nil, want derived-name conflict")
 		}
 	})
+	t.Run("histogram taking another histogram's derived name", func(t *testing.T) {
+		r := NewRegistry()
+		r.Histogram("request_duration", nil, nil)
+		r.Histogram("request_duration_bucket", nil, nil)
+		if r.Err() == nil {
+			t.Fatal("Err = nil, want derived-name conflict")
+		}
+	})
+	// The conflict index is maintained on removal, so the name frees up again.
+	t.Run("released after the histogram is unregistered", func(t *testing.T) {
+		r := NewRegistry()
+		r.Histogram("request_duration", nil, nil)
+		if !r.Unregister("request_duration", nil) {
+			t.Fatal("Unregister = false")
+		}
+		r.Gauge("request_duration_sum", nil)
+		if err := r.Err(); err != nil {
+			t.Fatalf("Err = %v, want the name to be free", err)
+		}
+	})
+	// An unrelated name that merely ends in a derived suffix is not a conflict.
+	t.Run("unrelated suffix", func(t *testing.T) {
+		r := NewRegistry()
+		r.Histogram("request_duration", nil, nil)
+		r.Counter("orders_count", nil)
+		if err := r.Err(); err != nil {
+			t.Fatalf("Err = %v, want no conflict", err)
+		}
+	})
 }

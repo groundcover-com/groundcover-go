@@ -41,7 +41,9 @@ func main() {
 	defer func() { _ = stop(context.Background()) }()
 
 	// Instruments are get-or-create: the same (name, labels) tuple always
-	// returns the same instrument, so this is safe on any hot path.
+	// returns the same instrument. The lookup takes a lock and builds a label
+	// signature, so on a hot path hold the instrument in a variable instead of
+	// looking it up per event.
 	reg.Counter("example_orders_total", map[string]string{"status": "ok"}).Inc()
 	reg.Gauge("example_queue_depth", nil).Set(17)
 	reg.Histogram("example_request_seconds", nil, nil).Observe(0.042)

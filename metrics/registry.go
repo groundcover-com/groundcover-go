@@ -29,11 +29,19 @@ const (
 // returns the same instrument. Invalid metric names, label names, or label
 // values never panic; they return a detached no-op instrument and record an
 // error retrievable via Err.
+//
+// A lookup sorts the labels, builds a signature, and takes the registry lock,
+// so hold an instrument in a variable rather than looking it up per event on a
+// hot path. Updating an instrument itself is a lock-free atomic operation.
 type Registry struct {
 	mu       sync.RWMutex
 	families map[string]*family
-	errCount int
-	firstErr error
+	// histogramNames indexes the histogram families so the check for a name
+	// colliding with a histogram's derived series stays constant-time as the
+	// registry grows.
+	histogramNames map[string]struct{}
+	errCount       int
+	firstErr       error
 }
 
 // family groups all series sharing one metric name.
@@ -52,7 +60,10 @@ type seriesEntry struct {
 
 // NewRegistry returns an empty Registry.
 func NewRegistry() *Registry {
-	return &Registry{families: make(map[string]*family)}
+	return &Registry{
+		families:       make(map[string]*family),
+		histogramNames: make(map[string]struct{}),
+	}
 }
 
 // Gauge returns the gauge for the given name and labels, creating it on
@@ -107,6 +118,7 @@ func (r *Registry) Unregister(name string, labels map[string]string) bool {
 	delete(fam.series, sig)
 	if len(fam.series) == 0 {
 		delete(r.families, name)
+		delete(r.histogramNames, name)
 	}
 	return true
 }
@@ -166,16 +178,30 @@ func (r *Registry) getOrCreate(name string, labels map[string]string, typ metric
 	sorted := sortedLabels(labels)
 	sig := labelSignature(sorted)
 
+	// Fast path: an existing series needs only a read lock, so updates to
+	// different series do not serialize behind one writer.
+	r.mu.RLock()
+	if fam, ok := r.families[name]; ok && fam.typ == typ {
+		if entry, ok := fam.series[sig]; ok {
+			r.mu.RUnlock()
+			return entry
+		}
+	}
+	r.mu.RUnlock()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	fam, ok := r.families[name]
 	if !ok {
-		if err := histogramNameConflict(r.families, name, typ); err != nil {
+		if err := r.nameConflictLocked(name, typ); err != nil {
 			r.recordErrLocked(err)
 			return nil
 		}
 		fam = &family{typ: typ, series: make(map[string]*seriesEntry)}
 		r.families[name] = fam
+		if typ == typeHistogram {
+			r.histogramNames[name] = struct{}{}
+		}
 	}
 	if fam.typ != typ {
 		r.recordErrLocked(fmt.Errorf("metrics: %q already registered as %s, requested %s", name, fam.typ, typ))
@@ -197,28 +223,27 @@ func (r *Registry) getOrCreate(name string, labels map[string]string, typ metric
 	return entry
 }
 
-func histogramNameConflict(families map[string]*family, name string, typ metricType) error {
-	const (
-		bucketSuffix = "_bucket"
-		sumSuffix    = "_sum"
-		countSuffix  = "_count"
-	)
-	suffixes := [...]string{bucketSuffix, sumSuffix, countSuffix}
+// derivedSuffixes are the series a histogram renders in addition to its own
+// name, and so are the names it cannot share with another metric.
+var derivedSuffixes = [...]string{"_bucket", "_sum", "_count"}
+
+// nameConflictLocked reports whether registering name with typ would collide
+// with a histogram's derived series, in either direction. The caller holds mu.
+func (r *Registry) nameConflictLocked(name string, typ metricType) error {
 	if typ == typeHistogram {
-		for _, suffix := range suffixes {
-			if _, exists := families[name+suffix]; exists {
+		for _, suffix := range derivedSuffixes {
+			if _, exists := r.families[name+suffix]; exists {
 				return fmt.Errorf("metrics: histogram %q conflicts with registered metric %q", name, name+suffix)
 			}
 		}
 	}
-	for existing, fam := range families {
-		if fam.typ != typeHistogram {
+	for _, suffix := range derivedSuffixes {
+		base, trimmed := strings.CutSuffix(name, suffix)
+		if !trimmed {
 			continue
 		}
-		for _, suffix := range suffixes {
-			if name == existing+suffix {
-				return fmt.Errorf("metrics: metric %q conflicts with histogram %q", name, existing)
-			}
+		if _, exists := r.histogramNames[base]; exists {
+			return fmt.Errorf("metrics: metric %q conflicts with histogram %q", name, base)
 		}
 	}
 	return nil

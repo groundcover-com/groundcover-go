@@ -362,7 +362,9 @@ Go runtime and process metrics (`go_goroutines`, `go_memstats_*`,
 `process_cpu_seconds_total`, cgroup-aware CPU/memory limits, ...) are
 collected by default; set `DisableRuntimeMetrics: true` to opt out. Every
 sample gets `job`, `instance` (hostname by default), and any `ExtraLabels`
-injected. Instrument lookups are get-or-create and never panic; push failures
+injected. Instrument lookups are get-or-create and never panic, but they take
+the registry lock and build a label signature, so keep an instrument in a
+variable on a hot path rather than looking it up per event. Push failures
 surface through `OnError` and `Stats()` and never stop the worker.
 
 Additional `MetricSource` producers can be pushed next to the registry; wrap
