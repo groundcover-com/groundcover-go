@@ -12,13 +12,24 @@ import (
 // Log is the aggregate SDK representation of a log record. It is exported so
 // Config.BeforeSendLog can inspect, scrub, or drop records.
 type Log struct {
-	ID          string
-	Timestamp   time.Time
-	Level       Level
-	Message     string
-	Attributes  Attributes
-	User        User
-	SessionID   string
+	// ID is an optional caller-assigned record identifier. Like
+	// logs.Record.ID it is not written to the logs intake, so it is only
+	// visible to Config.BeforeSendLog.
+	ID string
+	// Timestamp is when the record was emitted.
+	Timestamp time.Time
+	// Level is the severity.
+	Level Level
+	// Message is the log body.
+	Message string
+	// Attributes are structured fields. A few keys are claimed by the intake
+	// and the SDK; see logs.Attributes.
+	Attributes Attributes
+	// User is optional identity, pseudonymized by Config.Hasher if set.
+	User User
+	// SessionID is an optional session identifier.
+	SessionID string
+	// AnonymousID is an optional pre-auth identifier.
 	AnonymousID string
 	// Service reports the service the record belongs to. It is informational:
 	// the service and version on the wire come from the client's configuration,
@@ -45,9 +56,8 @@ func (c *Client) EmitLog(ctx context.Context, level Level, msg string, attrs ...
 
 // EmitLogRecord captures a pre-built log record, preserving the timestamp it
 // carries. It exists for logging-library bridges, which observe the time a
-// record was created rather than the time it reaches the SDK. Empty fields are
-// filled in: a zero Timestamp becomes now and an empty ID is generated. Context
-// scope is applied as it is for EmitLog.
+// record was created rather than the time it reaches the SDK. A zero Timestamp
+// becomes now. Context scope is applied as it is for EmitLog.
 func (c *Client) EmitLogRecord(ctx context.Context, record Log) {
 	if c.disabled || c.logClient == nil {
 		return
@@ -59,9 +69,6 @@ func (c *Client) EmitLogRecord(ctx context.Context, record Log) {
 func (c *Client) emitLogRecord(ctx context.Context, record Log) {
 	if !record.Level.valid() {
 		record.Level = LevelInfo
-	}
-	if record.ID == "" {
-		record.ID = newUUID()
 	}
 	if record.Timestamp.IsZero() {
 		record.Timestamp = time.Now()
@@ -125,6 +132,7 @@ func (c *Client) LogStats() Stats {
 		DroppedOverflow:      stats.DroppedOverflow,
 		DroppedSendExhausted: stats.DroppedSendExhausted,
 		DroppedBeforeSend:    stats.DroppedBeforeSend,
+		DroppedShutdown:      stats.DroppedShutdown,
 		Retries:              stats.Retries,
 		RateLimited:          stats.RateLimited,
 		PanicsRecovered:      stats.PanicsRecovered,

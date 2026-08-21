@@ -290,11 +290,11 @@ func TestCaptureAfterCloseIsDiscarded(t *testing.T) {
 		c.CaptureError(context.Background(), errors.New("late"))
 		c.EmitLog(context.Background(), LevelError, "late")
 	}
-	if got := c.Stats(); got.Captured != 0 || got.QueuePendingItems != 0 {
-		t.Fatalf("event stats after Close = %+v, want nothing captured or queued", got)
+	if got := c.Stats(); got.Captured != 0 || got.QueuePendingItems != 0 || got.DroppedShutdown != 100 {
+		t.Fatalf("event stats after Close = %+v, want 100 shutdown drops and nothing queued", got)
 	}
-	if got := c.LogStats(); got.Captured != 0 || got.QueuePendingItems != 0 {
-		t.Fatalf("log stats after Close = %+v, want nothing captured or queued", got)
+	if got := c.LogStats(); got.Captured != 0 || got.QueuePendingItems != 0 || got.DroppedShutdown != 100 {
+		t.Fatalf("log stats after Close = %+v, want 100 shutdown drops and nothing queued", got)
 	}
 }
 

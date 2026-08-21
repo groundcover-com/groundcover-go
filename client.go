@@ -280,6 +280,7 @@ func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) 
 	// Nothing drains the pipeline after Close, so stop before doing the work
 	// and before running any user callback.
 	if c.closing.Load() {
+		c.metrics.AddDropped(selfmetrics.DropShutdown, 1)
 		return
 	}
 	cfg := c.config()
@@ -353,12 +354,10 @@ func (c *Client) runBeforeSend(fn func(*Event) *Event, e *Event) (out *Event) {
 // captured after Close are discarded rather than buffered with nothing left to
 // drain them.
 func (c *Client) enqueue(cfg *Config, e *Event) {
-	if c.closing.Load() {
-		return
-	}
 	c.lifecycleMu.RLock()
 	defer c.lifecycleMu.RUnlock()
 	if c.closing.Load() {
+		c.metrics.AddDropped(selfmetrics.DropShutdown, 1)
 		return
 	}
 	dropped := c.ring.Push(e)

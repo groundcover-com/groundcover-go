@@ -103,6 +103,7 @@ func (c *Client) EmitRecord(_ context.Context, record Record) {
 	}
 	safeguard.Do(func() {
 		if c.closing.Load() {
+			c.metrics.AddDropped(selfmetrics.DropShutdown, 1)
 			return
 		}
 		if !record.Level.valid() {
@@ -138,6 +139,7 @@ func (c *Client) EmitRecord(_ context.Context, record Record) {
 		c.lifecycleMu.RLock()
 		defer c.lifecycleMu.RUnlock()
 		if c.closing.Load() {
+			c.metrics.AddDropped(selfmetrics.DropShutdown, 1)
 			return
 		}
 		c.metrics.IncCaptured()
