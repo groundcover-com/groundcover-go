@@ -12,6 +12,8 @@ never enter the core library's `go.sum`.
 | [`explicit-client`](explicit-client) | use an explicit `*Client` (libraries/multi-tenant) instead of the global; wire it into the net/http middleware, run a worker under an isolated scope, and read back `Stats` | `go run ./explicit-client` |
 | [`logs`](logs) | standalone `logs.Client` (no error SDK), direct emission, and the stdlib slog bridge sharing one client — no agent or tailer | `go run ./logs` |
 | [`logs-roundtrip`](logs-roundtrip) | **end-to-end logs**: submit one direct and one slog-bridge record to `/json/logs`, then query the logs API and verify both | `go run ./logs-roundtrip` |
+| [`metrics`](metrics) | standalone `metrics.Client` (no error SDK): registry instruments, background pusher, runtime metrics on by default — no agent or scrape endpoint | `go run ./metrics` |
+| [`metrics-roundtrip`](metrics-roundtrip) | **end-to-end metrics**: push a gauge/counter/histogram plus runtime metrics with a unique `run_id`, then query the Prometheus API and verify both custom and runtime metrics | `go run ./metrics-roundtrip` |
 | [`nethttp`](nethttp) | `net/http` middleware (panic recovery + per-request scope) | `go run ./nethttp` |
 | [`gin`](gin) | Gin middleware (panic recovery + `c.Error` capture) | `go run ./gin` |
 | [`echo`](echo) | Echo middleware (panic recovery + handler error capture) | `go run ./echo` |
@@ -30,6 +32,7 @@ credentials. To send real data, set the standard environment variables:
 export GC_DSN=https://<ingestion-origin>      # BYOC ingestion origin
 export GC_INGESTION_KEY=<write-key>           # RUM-type ingestion key
 export GC_LOGS_INGESTION_KEY=<logs-write-key> # only when logs use a separate key
+export GC_METRICS_INGESTION_KEY=<metrics-write-key> # metrics need a metrics-capable key (RUM keys are rejected)
 # roundtrip also needs the read API:
 export GC_API_KEY=<read-key>
 export GC_API_URL=https://api.groundcover.com
