@@ -12,8 +12,6 @@ type selfPointer struct{ next *selfPointer }
 
 type holdsMap struct{ data map[string]any }
 
-type deep struct{ next *deep }
-
 func TestAcyclicValuesFormatLikeFmt(t *testing.T) {
 	loop := &selfPointer{}
 	loop.next = loop

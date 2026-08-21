@@ -100,6 +100,64 @@ func TestPopBatchAlwaysReturnsOne(t *testing.T) {
 	}
 }
 
+func TestRequeueRestoresOrderAtTheHead(t *testing.T) {
+	b := ringbuf.New[int](100, 0, nil)
+	for i := range 5 {
+		b.Push(i)
+	}
+	batch := b.PopBatch(2, 0)
+	if dropped := b.Requeue(batch); dropped != 0 {
+		t.Fatalf("dropped %d on requeue", dropped)
+	}
+	if b.Len() != 5 {
+		t.Fatalf("length = %d, want 5", b.Len())
+	}
+	got := b.PopBatch(5, 0)
+	for i, item := range got {
+		if item != i {
+			t.Fatalf("order = %v, want the requeued entries first", got)
+		}
+	}
+}
+
+func TestRequeueDropsWhatNoLongerFits(t *testing.T) {
+	b := ringbuf.New[int](3, 0, nil)
+	batch := []int{1, 2}
+	for i := range 3 {
+		b.Push(i + 10)
+	}
+	// The queue refilled while the batch was out: newest entries win.
+	if dropped := b.Requeue(batch); dropped != 2 {
+		t.Fatalf("dropped = %d, want 2", dropped)
+	}
+	if b.Len() != 3 {
+		t.Fatalf("length = %d, want the bound respected", b.Len())
+	}
+}
+
+func TestRequeueRespectsByteBound(t *testing.T) {
+	b := ringbuf.New[int](100, 25, func(int) int { return 10 })
+	b.Push(1)
+	b.Push(2)
+	// Two more 10-byte entries do not fit in the remaining 5 bytes.
+	if dropped := b.Requeue([]int{3, 4}); dropped == 0 {
+		t.Fatal("expected the byte bound to drop entries")
+	}
+	if b.Bytes() > 25 {
+		t.Fatalf("bytes = %d, want at most 25", b.Bytes())
+	}
+}
+
+func TestRequeueOfNothingIsANoOp(t *testing.T) {
+	b := ringbuf.New[int](10, 0, nil)
+	if dropped := b.Requeue(nil); dropped != 0 {
+		t.Fatalf("dropped = %d, want 0", dropped)
+	}
+	if b.Len() != 0 {
+		t.Fatalf("length = %d, want 0", b.Len())
+	}
+}
+
 func TestConcurrentPush(t *testing.T) {
 	b := ringbuf.New[int](100000, 0, nil)
 	var wg sync.WaitGroup
