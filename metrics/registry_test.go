@@ -298,3 +298,34 @@ func TestRegistryRejectsHistogramDerivedNameConflicts(t *testing.T) {
 		}
 	})
 }
+
+func TestRegistryLabelIdentityCannotCollideOnControlBytes(t *testing.T) {
+	r := NewRegistry()
+	first := r.Gauge("collision_test", map[string]string{"a": "x\x02b\x01y"})
+	second := r.Gauge("collision_test", map[string]string{"a": "x", "b": "y"})
+	if first == second {
+		t.Fatal("distinct valid label sets returned the same instrument")
+	}
+	first.Set(1)
+	second.Set(2)
+
+	var out strings.Builder
+	r.WritePrometheus(&out)
+	body := out.String()
+	firstLine := "collision_test{a=\"x\x02b\x01y\"} 1"
+	if !strings.Contains(body, firstLine) {
+		t.Fatalf("first series missing:\n%s", body)
+	}
+	if !strings.Contains(body, `collision_test{a="x",b="y"} 2`) {
+		t.Fatalf("second series missing:\n%s", body)
+	}
+	if !r.Unregister("collision_test", map[string]string{"a": "x\x02b\x01y"}) {
+		t.Fatal("Unregister(first) = false")
+	}
+	var remaining strings.Builder
+	r.WritePrometheus(&remaining)
+	if strings.Contains(remaining.String(), "a=\"x\x02b\x01y\"") ||
+		!strings.Contains(remaining.String(), `a="x",b="y"`) {
+		t.Fatalf("Unregister removed the wrong series:\n%s", remaining.String())
+	}
+}

@@ -137,6 +137,48 @@ func TestMetadataIsDeduplicatedAcrossSources(t *testing.T) {
 	}
 }
 
+func TestMalformedAndLateMetadataIsDroppedWithoutPoisoningSamples(t *testing.T) {
+	cs := newCaptureServer(t)
+	source := textSource(strings.Join([]string{
+		"# ordinary comment survives",
+		"# TYPE broken nonsense",
+		"# HELP missing_text",
+		"# TYPE too_many gauge trailing",
+		"late_metric 1",
+		"# TYPE late_metric gauge",
+		"# TYPE healthy_metric counter",
+		"healthy_metric_total 2",
+	}, "\n") + "\n")
+	client, err := New(testConfig(cs), source)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	pushErr := client.Push(context.Background())
+	if pushErr == nil || !strings.Contains(pushErr.Error(), "malformed metadata") {
+		t.Fatalf("Push error = %v, want malformed metadata attribution", pushErr)
+	}
+
+	body := cs.last().body
+	for _, bad := range []string{"nonsense", "missing_text", "too_many", "# TYPE late_metric"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("invalid metadata %q reached the body:\n%s", bad, body)
+		}
+	}
+	for _, want := range []string{
+		"# ordinary comment survives",
+		"late_metric{",
+		"# TYPE healthy_metric counter",
+		"healthy_metric_total{",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("healthy content %q missing:\n%s", want, body)
+		}
+	}
+	if stats := client.Stats(); stats.MalformedLines != 4 || stats.PartialPushes != 1 {
+		t.Errorf("Stats = %+v, want four malformed lines and one partial push", stats)
+	}
+}
+
 func TestIndentedPrometheusCommentsAreAccepted(t *testing.T) {
 	cs := newCaptureServer(t)
 	source := textSource("  # TYPE indented_metric gauge\n  indented_metric 9\n")

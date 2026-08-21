@@ -28,7 +28,11 @@ type renderer struct {
 	// name of the source that produced it first.
 	seen     map[string]string
 	metadata map[string]metadataEntry
-	series   int
+	// sampledMetrics contains exact sample names and conventional family base
+	// names already written. HELP/TYPE declarations after a family's first
+	// sample are invalid and would poison the combined payload.
+	sampledMetrics map[string]struct{}
+	series         int
 
 	// Per-push counters, transferred into the client stats after rendering.
 	malformed  uint64
@@ -72,9 +76,21 @@ func (r *renderer) addSource(sourceName string, text []byte) (srcErrs []error, f
 			continue
 		}
 		if line[0] == '#' {
-			if key, value, ok := parseMetadataLine(string(line)); ok {
-				if first, exists := r.metadata[key]; exists {
-					if first.value != value {
+			metadata, err := parseMetadataLine(string(line))
+			if err != nil {
+				r.malformed++
+				if !malformedReported {
+					malformedReported = true
+					srcErrs = append(srcErrs, fmt.Errorf(
+						"metric source %q: malformed metadata at line %d: %w",
+						sourceName, lineNo, err,
+					))
+				}
+				continue
+			}
+			if metadata.declaration {
+				if first, exists := r.metadata[metadata.key]; exists {
+					if first.value != metadata.value {
 						r.malformed++
 						if !malformedReported {
 							malformedReported = true
@@ -86,7 +102,18 @@ func (r *renderer) addSource(sourceName string, text []byte) (srcErrs []error, f
 					}
 					continue
 				}
-				r.metadata[key] = metadataEntry{value: value, source: sourceName}
+				if _, sampled := r.sampledMetrics[metadata.metric]; sampled {
+					r.malformed++
+					if !malformedReported {
+						malformedReported = true
+						srcErrs = append(srcErrs, fmt.Errorf(
+							"metric source %q: metadata after sample at line %d",
+							sourceName, lineNo,
+						))
+					}
+					continue
+				}
+				r.metadata[metadata.key] = metadataEntry{value: metadata.value, source: sourceName}
 			}
 			r.out.Write(line)
 			r.out.WriteByte('\n')
@@ -160,11 +187,24 @@ func (r *renderer) addSample(sourceName string, s sample) (dup *DuplicateSeriesE
 	}
 	b.WriteByte('\n')
 	r.out.WriteString(b.String())
+	r.markSampled(s.name)
 	r.series++
 	if r.out.Len() > r.cfg.MaxBodyBytes {
 		return nil, &LimitError{Limit: limitMaxBodyBytes, Max: r.cfg.MaxBodyBytes, Actual: r.out.Len()}
 	}
 	return nil, nil
+}
+
+func (r *renderer) markSampled(name string) {
+	if r.sampledMetrics == nil {
+		r.sampledMetrics = make(map[string]struct{})
+	}
+	r.sampledMetrics[name] = struct{}{}
+	for _, suffix := range [...]string{"_bucket", "_sum", "_count", "_total"} {
+		if base, ok := strings.CutSuffix(name, suffix); ok {
+			r.sampledMetrics[base] = struct{}{}
+		}
+	}
 }
 
 // mergeLabels overlays the fixed labels on the source labels. Fixed labels
@@ -309,14 +349,44 @@ type metadataEntry struct {
 	source string
 }
 
-// parseMetadataLine identifies HELP and TYPE declarations. Other comments are
-// passed through untouched.
-func parseMetadataLine(line string) (key, value string, ok bool) {
+type parsedMetadata struct {
+	key         string
+	value       string
+	metric      string
+	declaration bool
+}
+
+// parseMetadataLine validates HELP and TYPE declarations. Other comments are
+// passed through untouched. A malformed declaration is returned as an error so
+// it can be attributed and dropped instead of poisoning every healthy source.
+func parseMetadataLine(line string) (parsedMetadata, error) {
 	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "#")))
-	if len(fields) < 3 || (fields[0] != "HELP" && fields[0] != "TYPE") || !isValidMetricName(fields[1]) {
-		return "", "", false
+	if len(fields) == 0 || (fields[0] != "HELP" && fields[0] != "TYPE") {
+		return parsedMetadata{}, nil
 	}
-	return fields[0] + "\x00" + fields[1], strings.Join(fields[2:], " "), true
+	if len(fields) < 3 || !isValidMetricName(fields[1]) {
+		return parsedMetadata{}, fmt.Errorf("invalid %s declaration", fields[0])
+	}
+	if fields[0] == "TYPE" {
+		if len(fields) != 3 || !validMetricType(fields[2]) {
+			return parsedMetadata{}, fmt.Errorf("invalid TYPE declaration")
+		}
+	}
+	return parsedMetadata{
+		key:         fields[0] + "\x00" + fields[1],
+		value:       strings.Join(fields[2:], " "),
+		metric:      fields[1],
+		declaration: true,
+	}, nil
+}
+
+func validMetricType(metricType string) bool {
+	switch metricType {
+	case "counter", "gauge", "histogram", "summary", "untyped":
+		return true
+	default:
+		return false
+	}
 }
 
 // parseQuotedValue decodes a label value starting just after the opening

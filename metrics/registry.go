@@ -302,14 +302,20 @@ func sortedLabels(labels map[string]string) []label {
 	return sorted
 }
 
-// labelSignature builds the map key identifying one sorted label set.
+// labelSignature builds the injective map key identifying one sorted label
+// set. Values may contain any valid UTF-8 bytes, including control bytes, so
+// raw separator characters would let distinct sets collide.
 func labelSignature(sorted []label) string {
 	var b strings.Builder
 	for _, l := range sorted {
+		b.WriteString(strconv.Itoa(len(l.name)))
+		b.WriteByte(':')
 		b.WriteString(l.name)
-		b.WriteByte('\x01')
+		b.WriteByte('=')
+		b.WriteString(strconv.Itoa(len(l.value)))
+		b.WriteByte(':')
 		b.WriteString(l.value)
-		b.WriteByte('\x02')
+		b.WriteByte(';')
 	}
 	return b.String()
 }
