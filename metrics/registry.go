@@ -223,13 +223,12 @@ func (r *Registry) getOrCreate(name string, labels map[string]string, typ metric
 	return entry
 }
 
-// derivedSuffixes are the series a histogram renders in addition to its own
-// name, and so are the names it cannot share with another metric.
-var derivedSuffixes = [...]string{"_bucket", "_sum", "_count"}
-
 // nameConflictLocked reports whether registering name with typ would collide
 // with a histogram's derived series, in either direction. The caller holds mu.
 func (r *Registry) nameConflictLocked(name string, typ metricType) error {
+	// The series a histogram renders in addition to its own name, and so the
+	// names it cannot share with another metric.
+	derivedSuffixes := [...]string{"_bucket", "_sum", "_count"}
 	if typ == typeHistogram {
 		for _, suffix := range derivedSuffixes {
 			if _, exists := r.families[name+suffix]; exists {
