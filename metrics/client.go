@@ -458,9 +458,18 @@ func safeRedirectPolicy(previous func(*http.Request, []*http.Request) error) fun
 	}
 }
 
+// sameOrigin reports whether the apikey header may follow a redirect from left
+// to right. Identical origins always may; a same-host http to https upgrade is
+// allowed too, since gateways commonly redirect to TLS. A downgrade or any
+// other host is refused.
 func sameOrigin(left, right *url.URL) bool {
-	return strings.EqualFold(left.Scheme, right.Scheme) &&
-		strings.EqualFold(left.Host, right.Host)
+	if !strings.EqualFold(left.Host, right.Host) {
+		return false
+	}
+	if strings.EqualFold(left.Scheme, right.Scheme) {
+		return true
+	}
+	return strings.EqualFold(left.Scheme, "http") && strings.EqualFold(right.Scheme, "https")
 }
 
 // gzipBytes returns the gzip-compressed form of b.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -724,6 +725,35 @@ func TestCrossOriginRedirectDoesNotForwardKey(t *testing.T) {
 	}
 	if receivedKey.Load() {
 		t.Fatal("redirect target received ingestion key")
+	}
+}
+
+// A gateway redirecting an http endpoint to TLS on the same host is the common
+// on-prem setup and must keep working.
+func TestSameHostTLSUpgradeRedirectIsAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		from, to    string
+		wantAllowed bool
+	}{
+		{"identical", "https://host/path", "https://host/other", true},
+		{"tls upgrade", "http://host/path", "https://host/path", true},
+		{"tls downgrade", "https://host/path", "http://host/path", false},
+		{"other host", "https://host/path", "https://elsewhere/path", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			from, err := url.Parse(tc.from)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tc.from, err)
+			}
+			to, err := url.Parse(tc.to)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tc.to, err)
+			}
+			if got := sameOrigin(from, to); got != tc.wantAllowed {
+				t.Fatalf("sameOrigin(%q, %q) = %v, want %v", tc.from, tc.to, got, tc.wantAllowed)
+			}
+		})
 	}
 }
 
