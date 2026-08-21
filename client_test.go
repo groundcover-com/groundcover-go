@@ -278,6 +278,26 @@ func TestCaptureMessage(t *testing.T) {
 	}
 }
 
+// After Close there is nothing left to drain, so a late capture must be
+// discarded rather than retained in the queue forever.
+func TestCaptureAfterCloseIsDiscarded(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{EnableLogs: true}, sender)
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for range 100 {
+		c.CaptureError(context.Background(), errors.New("late"))
+		c.EmitLog(context.Background(), LevelError, "late")
+	}
+	if got := c.Stats(); got.Captured != 0 || got.QueuePendingItems != 0 {
+		t.Fatalf("event stats after Close = %+v, want nothing captured or queued", got)
+	}
+	if got := c.LogStats(); got.Captured != 0 || got.QueuePendingItems != 0 {
+		t.Fatalf("log stats after Close = %+v, want nothing captured or queued", got)
+	}
+}
+
 func TestNewRequiresDSN(t *testing.T) {
 	if _, err := New(Config{}); !errors.Is(err, ErrMissingDSN) {
 		t.Fatalf("expected ErrMissingDSN, got %v", err)

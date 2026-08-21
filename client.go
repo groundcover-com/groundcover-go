@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +41,12 @@ type Client struct {
 	worker *transport.Worker[*Event]
 
 	logClient *gclogs.Client
+
+	// closing is set before Close drains, and lifecycleMu is held for reading
+	// only across the enqueue itself, so no event lands in the ring after the
+	// final drain.
+	closing     atomic.Bool
+	lifecycleMu sync.RWMutex
 
 	debug    bool
 	debugOut io.Writer
@@ -203,7 +210,9 @@ func (c *Client) Recover(ctx context.Context) {
 			// panic unwinding, but we still want a brief best-effort flush.
 			flushCtx, cancel := context.WithTimeout(context.Background(), panicFlushTimeout)
 			defer cancel()
-			_ = c.worker.Flush(flushCtx) //nolint:contextcheck // deliberate detached best-effort flush before re-raise
+			// Flush every signal: a log emitted just before the panic is as
+			// worth keeping as the panic event itself.
+			_ = c.Flush(flushCtx) //nolint:contextcheck // deliberate detached best-effort flush before re-raise
 		}, c.onPanic)
 	}
 	panic(r) // re-raise: we observe, never alter control flow
@@ -268,6 +277,11 @@ func (c *Client) newPanicEvent(recovered any) *Event {
 // finishAndEnqueue applies scope and options, pseudonymizes identity, computes
 // the fingerprint, runs BeforeSend, and enqueues the event.
 func (c *Client) finishAndEnqueue(ctx context.Context, e *Event, opts []Option) {
+	// Nothing drains the pipeline after Close, so stop before doing the work
+	// and before running any user callback.
+	if c.closing.Load() {
+		return
+	}
 	cfg := c.config()
 
 	scopeFromContext(ctx).applyTo(e)
@@ -335,8 +349,18 @@ func (c *Client) runBeforeSend(fn func(*Event) *Event, e *Event) (out *Event) {
 	return out
 }
 
-// enqueue performs the bounded, non-blocking hand-off to the pipeline.
+// enqueue performs the bounded, non-blocking hand-off to the pipeline. Events
+// captured after Close are discarded rather than buffered with nothing left to
+// drain them.
 func (c *Client) enqueue(cfg *Config, e *Event) {
+	if c.closing.Load() {
+		return
+	}
+	c.lifecycleMu.RLock()
+	defer c.lifecycleMu.RUnlock()
+	if c.closing.Load() {
+		return
+	}
 	dropped := c.ring.Push(e)
 	if dropped > 0 {
 		c.metrics.AddDropped(selfmetrics.DropOverflow, int64(dropped))
@@ -393,10 +417,16 @@ func (c *Client) Flush(ctx context.Context) error {
 }
 
 // Close flushes and stops the client. It is idempotent and bounded by ctx.
+// Captures made after it starts are discarded.
 func (c *Client) Close(ctx context.Context) error {
 	if c.disabled {
 		return nil
 	}
+	c.closing.Store(true)
+	// Let any capture that already passed the check finish enqueueing, so it is
+	// included in the final drain.
+	c.lifecycleMu.Lock()
+	c.lifecycleMu.Unlock() //nolint:staticcheck // lock/unlock is the barrier itself
 	if c.logClient == nil {
 		return c.worker.Close(ctx)
 	}
