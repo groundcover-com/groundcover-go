@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -242,5 +243,79 @@ func TestWorkerRunningStat(t *testing.T) {
 	}
 	if client.Stats().WorkerRunning {
 		t.Error("WorkerRunning = true after stop")
+	}
+}
+
+func TestDefaultClientUsesDefaultTransport(t *testing.T) {
+	cs := newCaptureServer(t)
+	client, err := New(testConfig(cs))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// A nil Transport means net/http falls back to http.DefaultTransport,
+	// whose Proxy is ProxyFromEnvironment — proxy env vars are honored and
+	// nothing (protocol, proxy) is forced by the SDK.
+	if client.httpClient.Transport != nil {
+		t.Errorf("default client Transport = %T, want nil (http.DefaultTransport)", client.httpClient.Transport)
+	}
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T", http.DefaultTransport)
+	}
+	if defaultTransport.Proxy == nil {
+		t.Error("http.DefaultTransport.Proxy = nil; proxy env vars would be ignored")
+	}
+}
+
+func TestPushThroughForwardProxy(t *testing.T) {
+	// A minimal HTTP forward proxy: it receives the absolute-form request
+	// (the same path a proxy env var would produce for an http:// endpoint)
+	// and forwards it to the upstream intake.
+	cs := newCaptureServer(t)
+	var proxied atomic.Int64
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !r.URL.IsAbs() {
+			t.Errorf("proxy got non-absolute URL %q; not a proxy-form request", r.URL)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		proxied.Add(1)
+		upstream, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		upstream.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(upstream)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		w.WriteHeader(resp.StatusCode)
+	}))
+	t.Cleanup(proxy.Close)
+
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatalf("parse proxy URL: %v", err)
+	}
+	cfg := testConfig(cs)
+	cfg.HTTPClient = &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+	}
+	client, err := New(cfg, textSource("proxied_metric 1\n"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := client.Push(context.Background()); err != nil {
+		t.Fatalf("Push through proxy: %v", err)
+	}
+	if proxied.Load() != 1 {
+		t.Errorf("proxy handled %d requests, want 1", proxied.Load())
+	}
+	if body := cs.last().body; !strings.Contains(body, "proxied_metric") {
+		t.Errorf("upstream did not receive the pushed body:\n%s", body)
 	}
 }
