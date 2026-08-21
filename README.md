@@ -11,8 +11,9 @@ The official [groundcover](https://groundcover.com) error tracking library for G
 [![Go Version](https://img.shields.io/github/go-mod/go-version/groundcover-com/groundcover-go)](go.mod)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Scope: error tracking, plus direct log delivery (opt-in).** Tracing,
-> profiling, and metrics producers are planned on top of the same shared core.
+> **Scope: error tracking, plus direct log delivery (opt-in) and a standalone
+> metrics push client.** Tracing and profiling producers are planned on top of
+> the same shared core.
 
 `groundcover-go` captures application errors and panics and ships them to
 groundcover with a strong safety guarantee: **the library never affects the host
@@ -148,6 +149,50 @@ Records inherit identity/attributes from the request scope (`SetUser` /
 observable via `LogStats()` and the Prometheus bridge
 (`groundcover_sdk_logs_*`).
 
+### Metrics — push without an agent
+
+Use the public `metrics` package when the program should ship its own metrics
+to groundcover — no agent, sidecar, or scrape endpoint. The client renders
+Prometheus text format and pushes it on a fixed interval:
+
+```go
+import "github.com/groundcover-com/groundcover-go/metrics"
+
+reg := metrics.NewRegistry()
+client, err := metrics.New(metrics.Config{
+	DSN:          dsn,
+	IngestionKey: metricsKey,
+	Job:          "checkout",
+}, reg)
+if err != nil {
+	return err
+}
+stop, err := client.Start(ctx) // immediate first push, then every 30s
+if err != nil {
+	return err
+}
+defer stop(context.Background())
+
+reg.Counter("orders_created_total", nil).Inc()
+reg.Gauge("queue_depth", nil).Set(17)
+reg.Histogram("request_seconds", nil, nil).Observe(0.042)
+```
+
+- **Runtime metrics are on by default** — `go_goroutines`, `go_memstats_*`,
+  `go_gc_duration_seconds`, and (on Linux) `process_*` including cgroup-aware
+  `process_cpu_cores_available` / `process_memory_limit_bytes`. Opt out with
+  `DisableRuntimeMetrics: true`.
+- Every sample gets `job` (defaults to `OTEL_SERVICE_NAME`/`GC_SERVICE_NAME`),
+  `instance` (defaults to the hostname), and any configured `ExtraLabels`.
+  Any `Exposition` source (anything that can write Prometheus text format) can
+  be plugged in next to the built-in `Registry`.
+- Payloads are bounded by documented limits (`MaxSeries` 10000,
+  `MaxBodyBytes` 8MiB, per-label caps); exceeding one fails that push with a
+  typed error and the worker keeps running. Failures surface via `OnError`
+  and `Stats()`; the client never panics and never blocks the host.
+- The ingestion key must be metrics-capable: RUM-type keys are rejected by
+  the metrics intake.
+
 ### Web frameworks
 
 Middleware is provided for net/http and every framework in the
@@ -202,6 +247,7 @@ for wiring details, including middleware ordering.
 | net/http middleware | `github.com/groundcover-com/groundcover-go/nethttp` | stdlib only (part of core) |
 | slog bridge (logs) | `github.com/groundcover-com/groundcover-go/gcslog` | stdlib only (part of core) |
 | standalone logs client | `github.com/groundcover-com/groundcover-go/logs` | stdlib only (part of core) |
+| standalone metrics push client | `github.com/groundcover-com/groundcover-go/metrics` | stdlib only (part of core) |
 | Echo middleware | `github.com/groundcover-com/groundcover-go/contrib/echo` | `github.com/labstack/echo/v4` |
 | FastHTTP middleware | `github.com/groundcover-com/groundcover-go/contrib/fasthttp` | `github.com/valyala/fasthttp` |
 | Fiber middleware | `github.com/groundcover-com/groundcover-go/contrib/fiber` | `github.com/gofiber/fiber/v2` |

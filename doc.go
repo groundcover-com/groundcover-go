@@ -52,6 +52,15 @@
 // with Config.BeforeSendLog, and are observable via Client.LogStats /
 // GlobalLogStats.
 //
+// # Metrics
+//
+// The standalone metrics subpackage pushes Prometheus metrics directly to
+// groundcover — no agent, sidecar, or scrape endpoint. It provides a
+// thread-safe registry of gauges, counters, and histograms, collects Go
+// runtime and process metrics by default, and runs a panic-guarded background
+// worker that pushes on a fixed interval. It is stdlib-only and independent of
+// error tracking.
+//
 // # Instrumenting an existing service
 //
 // A step-by-step playbook (for humans and AI coding agents) lives in

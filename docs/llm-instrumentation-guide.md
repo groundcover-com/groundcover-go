@@ -335,6 +335,34 @@ from the context scope, exactly like error events. Scrub or sample records with
 via `Hasher` applies to logs too. Always pass the request context so scope
 enrichment carries over.
 
+## 6c. Metrics (push, no agent or scrape endpoint)
+
+If the program needs metrics, use the standalone push client from
+`github.com/groundcover-com/groundcover-go/metrics` (stdlib-only, part of the
+core module). It renders Prometheus text format and POSTs it to groundcover
+on a fixed interval; nothing scrapes the process:
+
+```go
+reg := metrics.NewRegistry()
+client, err := metrics.New(metrics.Config{
+	DSN: dsn, IngestionKey: metricsKey, // needs a metrics-capable key, not a RUM key
+	Job: "checkout",                    // defaults to OTEL_SERVICE_NAME / GC_SERVICE_NAME
+}, reg)
+stop, err := client.Start(ctx) // immediate first push, then every 30s
+defer stop(context.Background())
+
+reg.Counter("orders_created_total", nil).Inc()
+reg.Gauge("queue_depth", nil).Set(float64(depth))
+reg.Histogram("request_seconds", nil, nil).Observe(elapsed.Seconds())
+```
+
+Go runtime and process metrics (`go_goroutines`, `go_memstats_*`,
+`process_cpu_seconds_total`, cgroup-aware CPU/memory limits, ...) are
+collected by default; set `DisableRuntimeMetrics: true` to opt out. Every
+sample gets `job`, `instance` (hostname by default), and any `ExtraLabels`
+injected. Instrument lookups are get-or-create and never panic; push failures
+surface through `OnError` and `Stats()` and never stop the worker.
+
 ## 7. Scrub PII / secrets (when handling sensitive data)
 
 `BeforeSend` is the single chokepoint. Return `nil` to drop an event; mutate and
