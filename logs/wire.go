@@ -25,11 +25,7 @@ func encodeBatch(records []*Record, res resource) ([]byte, error) {
 func buildWireRecord(record *Record, res resource) map[string]any {
 	out := make(map[string]any, len(record.Attributes)+len(res.attrs)+12)
 	flatten(out, "", record.Attributes)
-	for key := range out {
-		if reserved(key) {
-			delete(out, key)
-		}
-	}
+	relocateReserved(out)
 	for key, value := range res.attrs {
 		out[key] = value
 	}
@@ -50,6 +46,35 @@ func buildWireRecord(record *Record, res resource) map[string]any {
 	return out
 }
 
+// reservedKeyPrefix namespaces a caller attribute whose key is reserved. Keys
+// like "text" or "body" are ordinary attribute names at existing call sites, so
+// the value is kept under a prefixed key rather than discarded.
+const reservedKeyPrefix = "attributes."
+
+// relocateReserved moves attributes whose keys are reserved out of the way. If
+// the prefixed key is already taken, the explicit one wins and the reserved
+// entry is dropped.
+func relocateReserved(out map[string]any) {
+	var collisions []string
+	for key := range out {
+		if reserved(key) {
+			collisions = append(collisions, key)
+		}
+	}
+	for _, key := range collisions {
+		value := out[key]
+		delete(out, key)
+		relocated := reservedKeyPrefix + key
+		if _, taken := out[relocated]; !taken {
+			out[relocated] = value
+		}
+	}
+}
+
+// reserved reports whether a key is claimed by the intake or the SDK. The
+// intake extracts the message from message/msg/log/body/content/text and the
+// timestamp from timestamp/time/ts, so an attribute under one of those names
+// would silently become the record's message or time.
 func reserved(key string) bool {
 	switch key {
 	case "timestamp", "time", "ts",

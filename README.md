@@ -115,6 +115,12 @@ Nano `timestamp`, `msg`, and `level`; all other fields are retained as log
 attributes. Resource metadata is deliberately per-record rather than encoded
 in HTTP headers.
 
+The intake extracts the message from `message`/`msg`/`log`/`body`/`content`/
+`text` and the timestamp from `timestamp`/`time`/`ts`, so an attribute under one
+of those names — or under a key the SDK writes, such as `level` or `user.id` —
+is delivered under an `attributes.` prefix rather than overwriting the record's
+own message, time, or identity.
+
 There are two layers, by design:
 
 1. **The emission API** — push a log record (and, later, other signals)

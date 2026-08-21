@@ -219,7 +219,48 @@ func TestLogReservedKeysNotOverridable(t *testing.T) {
 		t.Fatalf("reserved keys overridden: %+v", attrs)
 	}
 	if _, ok := attrs["user.id"]; ok {
-		t.Fatalf("caller-injected identity must be dropped: %+v", attrs)
+		t.Fatalf("caller-injected identity must not be delivered as identity: %+v", attrs)
+	}
+	// The values are kept, out of the way, rather than discarded.
+	for key, want := range map[string]string{
+		"attributes.message": "spoofed",
+		"attributes.level":   "fatal",
+		"attributes.user.id": "spoofed-id",
+	} {
+		if attrs[key] != want {
+			t.Errorf("%s = %v, want %q", key, attrs[key], want)
+		}
+	}
+}
+
+// The intake extracts the message and timestamp from several ordinary-looking
+// keys. An attribute under one of those names is common at existing call sites
+// and must be preserved rather than vanishing.
+func TestLogAttributesUnderIntakeExtractedKeysArePreserved(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{EnableLogs: true}, sender)
+
+	c.LogInfo(context.Background(), "handled request", Attributes{
+		"text":    "response template",
+		"body":    "payload",
+		"content": "document",
+		"log":     "nested logger name",
+		"time":    "12:00",
+		"ts":      "unix-ish",
+	})
+	_ = c.Flush(context.Background())
+
+	attrs := decodeLogPayload(t, sender)[0]
+	if attrs["msg"] != "handled request" {
+		t.Fatalf("message overridden: %+v", attrs)
+	}
+	for _, key := range []string{"text", "body", "content", "log", "time", "ts"} {
+		if _, ok := attrs[key]; ok {
+			t.Errorf("%s reached the wire under its reserved name: %+v", key, attrs)
+		}
+		if _, ok := attrs["attributes."+key]; !ok {
+			t.Errorf("attribute %q was dropped: %+v", key, attrs)
+		}
 	}
 }
 

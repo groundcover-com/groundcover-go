@@ -8,7 +8,15 @@ import (
 	"github.com/groundcover-com/groundcover-go/internal/safefmt"
 )
 
-// Attributes is a bag of structured fields attached to a log record.
+// Attributes is a bag of structured fields attached to a log record. Nested
+// maps are flattened into dotted keys.
+//
+// A few keys are claimed by the intake, which extracts the message from
+// message, msg, log, body, content, or text, and the timestamp from timestamp,
+// time, or ts, and by the SDK, which writes level, severity_number, service,
+// env, cluster, source, user.*, session.id, and anonymous_id. An attribute
+// under one of those names is delivered under an "attributes." prefix instead
+// of overwriting the record's own message, time, or identity.
 type Attributes map[string]any
 
 const maxAttrDepth = 10
