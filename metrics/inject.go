@@ -92,7 +92,7 @@ func (r *renderer) addSource(sourceName string, text []byte) (srcErrs []error, f
 // line. A dropped duplicate is returned as dup; fatal errors abort the push.
 func (r *renderer) addSample(sourceName string, s sample) (dup *DuplicateSeriesError, fatal error) {
 	merged, overridden := mergeLabels(s.labels, r.fixed)
-	r.overrides += uint64(overridden)
+	r.overrides += overridden
 	if len(merged) > r.cfg.MaxLabelsPerSeries {
 		return nil, &LimitError{Limit: limitMaxLabelsPerSeries, Max: r.cfg.MaxLabelsPerSeries, Actual: len(merged)}
 	}
@@ -142,7 +142,7 @@ func (r *renderer) addSample(sourceName string, s sample) (dup *DuplicateSeriesE
 // replace same-named source labels; overridden reports how many source
 // labels were replaced. The result is sorted by name and never contains
 // duplicates.
-func mergeLabels(source, fixed []label) (merged []label, overridden int) {
+func mergeLabels(source, fixed []label) (merged []label, overridden uint64) {
 	byName := make(map[string]string, len(source)+len(fixed))
 	for _, l := range source {
 		byName[l.name] = l.value
