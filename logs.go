@@ -29,25 +29,46 @@ func (c *Client) EmitLog(ctx context.Context, level Level, msg string, attrs ...
 		return
 	}
 	safeguard.Do(func() {
-		if !level.valid() {
-			level = LevelInfo
-		}
-		record := &Log{
-			ID:        newUUID(),
-			Timestamp: time.Now(),
-			Level:     level,
-			Message:   msg,
-			Service:   Service{Name: c.res.serviceName, Version: c.res.release},
-		}
+		record := Log{Level: level, Message: msg}
 		for _, attributes := range attrs {
 			if record.Attributes == nil {
 				record.Attributes = make(Attributes, len(attributes))
 			}
 			record.Attributes.merge(attributes)
 		}
-		scopeFromContext(ctx).applyToLog(record)
-		c.logClient.EmitRecord(ctx, toStandaloneRecord(record))
+		c.emitLogRecord(ctx, record)
 	}, c.onPanic)
+}
+
+// EmitLogRecord captures a pre-built log record, preserving the timestamp it
+// carries. It exists for logging-library bridges, which observe the time a
+// record was created rather than the time it reaches the SDK. Empty fields are
+// filled in: a zero Timestamp becomes now, an empty ID is generated, and an
+// empty Service takes the client's service name and release. Context scope is
+// applied as it is for EmitLog.
+func (c *Client) EmitLogRecord(ctx context.Context, record Log) {
+	if c.disabled || c.logClient == nil {
+		return
+	}
+	safeguard.Do(func() { c.emitLogRecord(ctx, record) }, c.onPanic)
+}
+
+// emitLogRecord normalizes and forwards a record. The caller guards panics.
+func (c *Client) emitLogRecord(ctx context.Context, record Log) {
+	if !record.Level.valid() {
+		record.Level = LevelInfo
+	}
+	if record.ID == "" {
+		record.ID = newUUID()
+	}
+	if record.Timestamp.IsZero() {
+		record.Timestamp = time.Now()
+	}
+	if record.Service.Name == "" {
+		record.Service = Service{Name: c.res.serviceName, Version: c.res.release}
+	}
+	scopeFromContext(ctx).applyToLog(&record)
+	c.logClient.EmitRecord(ctx, toStandaloneRecord(&record))
 }
 
 // LogDebug emits a debug-level log record.

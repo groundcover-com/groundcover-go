@@ -147,7 +147,9 @@ logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client}))
 Records inherit identity/attributes from the request scope (`SetUser` /
 `WithScope`) when emitted through the aggregate client (`Init` / `LogInfo`
 / a handler with nil `Options.Client`). A standalone `logs.Client` has no
-error-tracking scope. Records can be scrubbed or sampled with
+error-tracking scope. Bridges that carry their own timestamp emit through
+`EmitLogRecord`, which keeps the record's original time instead of the time it
+reached the SDK. Records can be scrubbed or sampled with
 `BeforeSendLog`, and are observable via `LogStats()` and the Prometheus
 bridge (`groundcover_sdk_logs_*`).
 

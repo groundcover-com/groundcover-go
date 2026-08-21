@@ -205,3 +205,28 @@ func TestHandlerHonorsRecordTime(t *testing.T) {
 		t.Fatalf("timestamp = %v, want record time", got)
 	}
 }
+
+// The zero-value Options path goes through the package-level client, which must
+// preserve the record time just like an explicitly passed client does.
+func TestHandlerHonorsRecordTimeThroughGlobalClient(t *testing.T) {
+	sink := &capture{}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	if err := groundcover.Init(groundcover.Config{DSN: srv.URL, EnableLogs: true}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = groundcover.Init(groundcover.Config{Disabled: true}) })
+
+	fixed := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	handler := gcslog.NewHandler(gcslog.Options{})
+	if err := handler.Handle(context.Background(), slog.NewRecord(fixed, slog.LevelInfo, "stamped", 0)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if err := groundcover.FlushTimeout(5 * time.Second); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	got := decodeAll(t, sink)[0]["timestamp"]
+	if got != "2024-01-02T03:04:05Z" {
+		t.Fatalf("timestamp = %v, want record time", got)
+	}
+}

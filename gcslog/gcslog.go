@@ -97,7 +97,12 @@ func (h *handler) Handle(ctx context.Context, r slog.Record) error {
 
 func (h *handler) emit(ctx context.Context, record gclogs.Record) {
 	if h.opts.Client == nil {
-		groundcover.EmitLog(ctx, groundcover.Level(record.Level), record.Message, groundcover.Attributes(record.Attributes))
+		groundcover.EmitLogRecord(ctx, groundcover.Log{
+			Timestamp:  record.Timestamp,
+			Level:      groundcover.Level(record.Level),
+			Message:    record.Message,
+			Attributes: groundcover.Attributes(record.Attributes),
+		})
 		return
 	}
 	if emitter, ok := h.opts.Client.(interface {

@@ -94,6 +94,12 @@ func EmitLog(ctx context.Context, level Level, msg string, attrs ...Attributes) 
 	currentGlobal().EmitLog(ctx, level, msg, attrs...)
 }
 
+// EmitLogRecord emits a pre-built log record using the package-level client.
+// See Client.EmitLogRecord.
+func EmitLogRecord(ctx context.Context, record Log) {
+	currentGlobal().EmitLogRecord(ctx, record)
+}
+
 // LogDebug emits a debug-level log record using the package-level client.
 func LogDebug(ctx context.Context, msg string, attrs ...Attributes) {
 	currentGlobal().LogDebug(ctx, msg, attrs...)
