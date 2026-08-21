@@ -20,7 +20,10 @@ type Log struct {
 	User        User
 	SessionID   string
 	AnonymousID string
-	Service     Service
+	// Service reports the service the record belongs to. It is informational:
+	// the service and version on the wire come from the client's configuration,
+	// so setting this field has no effect on delivery.
+	Service Service
 }
 
 // EmitLog captures a log through this client's standalone logs component.
@@ -43,9 +46,8 @@ func (c *Client) EmitLog(ctx context.Context, level Level, msg string, attrs ...
 // EmitLogRecord captures a pre-built log record, preserving the timestamp it
 // carries. It exists for logging-library bridges, which observe the time a
 // record was created rather than the time it reaches the SDK. Empty fields are
-// filled in: a zero Timestamp becomes now, an empty ID is generated, and an
-// empty Service takes the client's service name and release. Context scope is
-// applied as it is for EmitLog.
+// filled in: a zero Timestamp becomes now and an empty ID is generated. Context
+// scope is applied as it is for EmitLog.
 func (c *Client) EmitLogRecord(ctx context.Context, record Log) {
 	if c.disabled || c.logClient == nil {
 		return

@@ -78,7 +78,8 @@ type Config struct {
 	MaxRetries int
 	// RetryMax caps exponential backoff (default 30s).
 	RetryMax time.Duration
-	// RateLimitBackoff is the minimum 429 backoff (default 30s).
+	// RateLimitBackoff is the minimum 429 backoff (default 30s). A longer
+	// server-supplied Retry-After is honoured up to RetryMax.
 	RateLimitBackoff time.Duration
 	// StackDepthMax caps captured stack frames (default 128).
 	StackDepthMax int

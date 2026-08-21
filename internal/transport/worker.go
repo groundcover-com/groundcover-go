@@ -301,9 +301,12 @@ func (w *Worker[T]) classifyRetry(err error, attempt int) (backoff time.Duration
 		if attempt >= w.cfg.MaxRetries {
 			return 0, true
 		}
+		// Honour Retry-After, but only up to the configured ceiling: an intake
+		// answering with hours would otherwise pin a sender and its
+		// concurrency slot for that long, stalling delivery entirely.
 		backoff = w.cfg.RateLimitBackoff
 		if se.RetryAfter > backoff {
-			backoff = se.RetryAfter
+			backoff = min(se.RetryAfter, max(w.cfg.RetryMax, w.cfg.RateLimitBackoff))
 		}
 		return backoff, false
 	}

@@ -206,6 +206,71 @@ func TestWorker429UsesRateLimitBackoff(t *testing.T) {
 	}
 }
 
+// An intake that asks for an implausibly long wait must not pin a sender for
+// that long; the configured ceiling wins.
+func TestWorkerClampsRetryAfter(t *testing.T) {
+	var sleeps []time.Duration
+	var mu sync.Mutex
+	calls := atomic.Int64{}
+	sender := &testutil.MockSender{Responder: func(_ int, _ []byte) error {
+		if calls.Add(1) == 1 {
+			return &transport.SendError{StatusCode: 429, RateLimited: true, Retryable: true, RetryAfter: 24 * time.Hour}
+		}
+		return nil
+	}}
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{
+		BatchSize:        10,
+		MaxRetries:       3,
+		RetryMax:         20 * time.Second,
+		RateLimitBackoff: 5 * time.Second,
+		Sleep:            func(_ context.Context, d time.Duration) { mu.Lock(); sleeps = append(sleeps, d); mu.Unlock() },
+	})
+	w.Start()
+	defer func() { _ = w.Close(context.Background()) }()
+
+	ring.Push(1)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sleeps) != 1 || sleeps[0] != 20*time.Second {
+		t.Fatalf("backoff = %v, want it clamped to RetryMax", sleeps)
+	}
+}
+
+// A caller who configures a rate-limit backoff longer than RetryMax means it.
+func TestWorkerHonorsConfiguredRateLimitBackoffAboveRetryMax(t *testing.T) {
+	var sleeps []time.Duration
+	var mu sync.Mutex
+	calls := atomic.Int64{}
+	sender := &testutil.MockSender{Responder: func(_ int, _ []byte) error {
+		if calls.Add(1) == 1 {
+			return &transport.SendError{StatusCode: 429, RateLimited: true, Retryable: true, RetryAfter: time.Hour}
+		}
+		return nil
+	}}
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{
+		BatchSize:        10,
+		MaxRetries:       3,
+		RetryMax:         5 * time.Second,
+		RateLimitBackoff: 90 * time.Second,
+		Sleep:            func(_ context.Context, d time.Duration) { mu.Lock(); sleeps = append(sleeps, d); mu.Unlock() },
+	})
+	w.Start()
+	defer func() { _ = w.Close(context.Background()) }()
+
+	ring.Push(1)
+	if err := w.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sleeps) != 1 || sleeps[0] != 90*time.Second {
+		t.Fatalf("backoff = %v, want the configured RateLimitBackoff", sleeps)
+	}
+}
+
 func TestWorkerPermanentErrorDropsNoRetry(t *testing.T) {
 	sender := &testutil.MockSender{Responder: func(_ int, _ []byte) error {
 		return &transport.SendError{StatusCode: 400, Retryable: false, Err: errors.New("bad")}

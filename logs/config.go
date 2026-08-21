@@ -56,7 +56,8 @@ type Config struct {
 	MaxRetries int
 	// RetryMax caps exponential retry backoff.
 	RetryMax time.Duration
-	// RateLimitBackoff is the minimum 429 backoff.
+	// RateLimitBackoff is the minimum 429 backoff. A longer server-supplied
+	// Retry-After is honoured up to RetryMax.
 	RateLimitBackoff time.Duration
 
 	// BeforeSend can scrub or sample a record; returning nil drops it.
