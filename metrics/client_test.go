@@ -258,6 +258,11 @@ func TestNewValidation(t *testing.T) {
 		{"both DSN and Endpoint", Config{DSN: "x", Endpoint: "https://y.example.com/push"}},
 		// Fixed labels reach every sample, so invalid bytes there would make
 		// the whole exposition out of spec on every push.
+		// A DSN no request can be built from must fail at construction rather
+		// than as a push failure repeating every interval.
+		{"dsn with a bad scheme", Config{DSN: "ftp://host.example"}},
+		{"dsn with no host", Config{DSN: "https://"}},
+		{"endpoint with control characters", Config{Endpoint: "https://host.example/\x7f"}},
 		{"configured job not utf-8", Config{DSN: "x", Job: "svc\xff"}},
 		{"configured instance not utf-8", Config{DSN: "x", Instance: "host\xff"}},
 		{"extra label value not utf-8", Config{DSN: "x", ExtraLabels: map[string]string{"tag": "a\xffb"}}},

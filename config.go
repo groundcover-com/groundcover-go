@@ -2,9 +2,12 @@ package groundcover
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/groundcover-com/groundcover-go/internal/endpoint"
 )
 
 // Default configuration values.
@@ -164,15 +167,16 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.DSN) == "" {
 		return ErrMissingDSN
 	}
+	// Catch a DSN no request can be built from here, at construction, rather
+	// than as a delivery failure repeating for the life of the process.
+	if err := endpoint.Validate(c.endpoint()); err != nil {
+		return fmt.Errorf("groundcover: %w", err)
+	}
 	return nil
 }
 
 // endpoint returns the fully-qualified ingestion URL (DSN + ingestPath), adding
 // a default https scheme when the DSN omits one.
 func (c Config) endpoint() string {
-	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
-	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
-		dsn = "https://" + dsn
-	}
-	return dsn + ingestPath
+	return endpoint.Resolve(c.DSN, ingestPath)
 }

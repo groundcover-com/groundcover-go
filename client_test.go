@@ -303,3 +303,22 @@ func TestNewRequiresDSN(t *testing.T) {
 		t.Fatalf("expected ErrMissingDSN, got %v", err)
 	}
 }
+
+// A DSN that cannot produce a usable URL is a configuration error, reported at
+// construction rather than as a delivery failure for the life of the process.
+func TestNewRejectsUnusableDSN(t *testing.T) {
+	for _, dsn := range []string{"ftp://host.example", "https://", "://host.example"} {
+		if _, err := New(Config{DSN: dsn}); err == nil {
+			t.Errorf("New(DSN=%q) = nil error, want a configuration error", dsn)
+		}
+	}
+	// A host without a scheme, and a host:port, still get the default scheme.
+	for _, dsn := range []string{"host.example", "localhost:8080", "HTTPS://host.example"} {
+		client, err := New(Config{DSN: dsn})
+		if err != nil {
+			t.Errorf("New(DSN=%q) = %v, want nil", dsn, err)
+			continue
+		}
+		_ = client.Close(context.Background())
+	}
+}

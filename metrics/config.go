@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/groundcover-com/groundcover-go/internal/endpoint"
 )
 
 const (
@@ -194,6 +196,14 @@ func (c Config) validate() error {
 	if fixedLabelCount > c.MaxLabelsPerSeries {
 		return fmt.Errorf("metrics: %d fixed labels exceed MaxLabelsPerSeries (%d)", fixedLabelCount, c.MaxLabelsPerSeries)
 	}
+	// Catch an endpoint no request can be built from here, at construction,
+	// rather than as a push failure repeating every interval. A disabled
+	// client never pushes, so it needs no endpoint.
+	if dsn != "" || override != "" {
+		if err := endpoint.Validate(c.pushEndpoint()); err != nil {
+			return fmt.Errorf("metrics: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -203,11 +213,7 @@ func (c Config) pushEndpoint() string {
 	if override := strings.TrimSpace(c.Endpoint); override != "" {
 		return override
 	}
-	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
-	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
-		dsn = "https://" + dsn
-	}
-	return dsn + "/api/v1/import/prometheus"
+	return endpoint.Resolve(c.DSN, "/api/v1/import/prometheus")
 }
 
 // fixedLabels returns the job/instance/extra labels, sorted by name.

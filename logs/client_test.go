@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -155,6 +156,31 @@ func TestStandaloneSanitizesNonFiniteAndRejectsOversizedRecords(t *testing.T) {
 	client.Info(context.Background(), "after close")
 	if stats := client.Stats(); stats.Captured != 1 || stats.QueuePendingItems != 0 {
 		t.Fatalf("post-close stats = %+v", stats)
+	}
+}
+
+// A DSN that cannot produce a usable URL is a configuration error, reported at
+// construction rather than as a delivery failure for the life of the process.
+func TestStandaloneRejectsUnusableDSN(t *testing.T) {
+	if _, err := logs.New(logs.Config{}); !errors.Is(err, logs.ErrMissingDSN) {
+		t.Fatalf("New(no DSN) = %v, want ErrMissingDSN", err)
+	}
+	for _, dsn := range []string{"ftp://host.example", "https://", "://host.example"} {
+		if _, err := logs.New(logs.Config{DSN: dsn}); err == nil {
+			t.Errorf("New(DSN=%q) = nil error, want a configuration error", dsn)
+		}
+	}
+	for _, dsn := range []string{"host.example", "localhost:8080", "HTTPS://host.example"} {
+		client, err := logs.New(logs.Config{DSN: dsn})
+		if err != nil {
+			t.Errorf("New(DSN=%q) = %v, want nil", dsn, err)
+			continue
+		}
+		_ = client.Close(context.Background())
+	}
+	// A disabled client needs no endpoint at all.
+	if _, err := logs.New(logs.Config{Disabled: true}); err != nil {
+		t.Errorf("New(Disabled) = %v, want nil", err)
 	}
 }
 

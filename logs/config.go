@@ -2,9 +2,12 @@ package logs
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/groundcover-com/groundcover-go/internal/endpoint"
 )
 
 const (
@@ -74,6 +77,14 @@ func (c Config) validate() error {
 	if !c.Disabled && strings.TrimSpace(c.DSN) == "" {
 		return ErrMissingDSN
 	}
+	if c.Disabled {
+		return nil
+	}
+	// Catch a DSN no request can be built from here, at construction, rather
+	// than as a delivery failure repeating for the life of the process.
+	if err := endpoint.Validate(c.endpoint()); err != nil {
+		return fmt.Errorf("groundcover/logs: %w", err)
+	}
 	return nil
 }
 
@@ -111,9 +122,5 @@ func (c Config) withDefaults() Config {
 }
 
 func (c Config) endpoint() string {
-	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
-	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
-		dsn = "https://" + dsn
-	}
-	return dsn + "/json/logs"
+	return endpoint.Resolve(c.DSN, "/json/logs")
 }
