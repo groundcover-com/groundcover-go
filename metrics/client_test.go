@@ -253,6 +253,7 @@ func TestNewValidation(t *testing.T) {
 		{"job too long", Config{DSN: "x", Job: "toolong", MaxLabelValueBytes: 4}},
 		{"instance too long", Config{DSN: "x", Instance: "toolong", MaxLabelValueBytes: 4}},
 		{"too many fixed labels", Config{DSN: "x", Job: "j", Instance: "i", MaxLabelsPerSeries: 1}},
+		{"reserved extra label prefix", Config{DSN: "x", ExtraLabels: map[string]string{"__name__": "x"}}},
 		{"both DSN and Endpoint", Config{DSN: "x", Endpoint: "https://y.example.com/push"}},
 	}
 	for _, tt := range tests {

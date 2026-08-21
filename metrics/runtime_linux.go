@@ -197,11 +197,13 @@ func (s *runtimeSource) cgroupV1CPU() (float64, bool) {
 func (s *runtimeSource) memoryLimitBytes() (float64, bool) {
 	if leaf, mount, ok := s.cgroupDir("", true); ok {
 		var tightest float64
+		var sawMemoryMax bool
 		for _, filename := range cgroupAncestorFiles(leaf, mount, "memory.max") {
 			data, err := fs.ReadFile(s.fsys, filename)
 			if err != nil {
 				continue
 			}
+			sawMemoryMax = true
 			text := strings.TrimSpace(string(data))
 			if text == "max" {
 				continue
@@ -214,7 +216,10 @@ func (s *runtimeSource) memoryLimitBytes() (float64, bool) {
 		if tightest > 0 {
 			return tightest, true
 		}
-		return s.hostMemTotalBytes()
+		if sawMemoryMax {
+			return s.hostMemTotalBytes()
+		}
+		// Hybrid layouts expose a cgroup2 hierarchy but keep memory on v1.
 	}
 	if data, err := fs.ReadFile(s.fsys, "sys/fs/cgroup/memory.max"); err == nil {
 		text := strings.TrimSpace(string(data))

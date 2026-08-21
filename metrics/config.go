@@ -152,6 +152,9 @@ func (c Config) validate() error {
 		if !isValidLabelName(name) {
 			return fmt.Errorf("metrics: ExtraLabels key %q is not a valid Prometheus label name", name)
 		}
+		if strings.HasPrefix(name, "__") {
+			return fmt.Errorf("metrics: ExtraLabels key %q is reserved", name)
+		}
 		if len(name) > c.MaxLabelNameBytes {
 			return fmt.Errorf("metrics: ExtraLabels key %q exceeds MaxLabelNameBytes (%d)", name, c.MaxLabelNameBytes)
 		}

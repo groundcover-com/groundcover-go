@@ -176,6 +176,21 @@ func TestNestedCgroupV2MembershipAndAncestorLimits(t *testing.T) {
 	}
 }
 
+func TestHybridCgroupFallsBackToV1MemoryLimit(t *testing.T) {
+	src := &runtimeSource{fsys: fstest.MapFS{
+		"proc/self/cgroup": {Data: []byte("0::/kubepods/pod/container\n1:memory:/kubepods/pod/container\n")},
+		"proc/self/mountinfo": {Data: []byte(
+			"29 23 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n" +
+				"30 23 0:27 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+		)},
+		"sys/fs/cgroup/memory/kubepods/pod/container/memory.limit_in_bytes": {Data: []byte("536870912\n")},
+	}}
+	got, ok := src.memoryLimitBytes()
+	if !ok || got != 536870912 {
+		t.Fatalf("memoryLimitBytes = %v, %v; want v1 limit 536870912", got, ok)
+	}
+}
+
 func TestMalformedProcFilesAreOmitted(t *testing.T) {
 	src := &runtimeSource{fsys: fstest.MapFS{
 		"proc/self/stat":  {Data: []byte("garbage without parens\n")},

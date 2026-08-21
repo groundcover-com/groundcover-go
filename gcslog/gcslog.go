@@ -75,23 +75,38 @@ func (h *handler) Enabled(_ context.Context, level slog.Level) bool {
 // asynchronous and failures surface through the SDK's self-metrics, never as
 // logging errors.
 func (h *handler) Handle(ctx context.Context, r slog.Record) error {
-	attrs := make(gclogs.Attributes, len(h.attrs)+r.NumAttrs())
-	for k, v := range h.attrs {
-		attrs[k] = v
-	}
-	r.Attrs(func(a slog.Attr) bool {
-		flatten(attrs, h.prefix, a)
-		return true
-	})
-
 	_ = safeguard.Do(func() {
-		if h.opts.Client != nil {
-			h.opts.Client.EmitLog(ctx, toLevel(r.Level), r.Message, attrs)
-		} else {
-			groundcover.EmitLog(ctx, groundcover.Level(toLevel(r.Level)), r.Message, groundcover.Attributes(attrs))
+		attrs := make(gclogs.Attributes, len(h.attrs)+r.NumAttrs())
+		for k, v := range h.attrs {
+			attrs[k] = v
 		}
+		r.Attrs(func(a slog.Attr) bool {
+			flatten(attrs, h.prefix, a)
+			return true
+		})
+		record := gclogs.Record{
+			Timestamp:  r.Time,
+			Level:      toLevel(r.Level),
+			Message:    r.Message,
+			Attributes: attrs,
+		}
+		h.emit(ctx, record)
 	}, nil)
 	return nil
+}
+
+func (h *handler) emit(ctx context.Context, record gclogs.Record) {
+	if h.opts.Client == nil {
+		groundcover.EmitLog(ctx, groundcover.Level(record.Level), record.Message, groundcover.Attributes(record.Attributes))
+		return
+	}
+	if emitter, ok := h.opts.Client.(interface {
+		EmitRecord(context.Context, gclogs.Record)
+	}); ok {
+		emitter.EmitRecord(ctx, record)
+		return
+	}
+	h.opts.Client.EmitLog(ctx, record.Level, record.Message, record.Attributes)
 }
 
 // WithAttrs returns a copy of the handler with the attributes pre-flattened
@@ -101,9 +116,11 @@ func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		return h
 	}
 	next := h.clone()
-	for _, a := range attrs {
-		flatten(next.attrs, next.prefix, a)
-	}
+	_ = safeguard.Do(func() {
+		for _, a := range attrs {
+			flatten(next.attrs, next.prefix, a)
+		}
+	}, nil)
 	return next
 }
 

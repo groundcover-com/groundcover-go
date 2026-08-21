@@ -389,10 +389,7 @@ func (c *Client) Flush(ctx context.Context) error {
 	if c.logClient == nil {
 		return c.worker.Flush(ctx)
 	}
-	results := make(chan error, 2)
-	go func() { results <- c.worker.Flush(ctx) }()
-	go func() { results <- c.logClient.Flush(ctx) }()
-	return errors.Join(<-results, <-results)
+	return joinConcurrent(func() error { return c.worker.Flush(ctx) }, func() error { return c.logClient.Flush(ctx) })
 }
 
 // Close flushes and stops the client. It is idempotent and bounded by ctx.
@@ -403,9 +400,20 @@ func (c *Client) Close(ctx context.Context) error {
 	if c.logClient == nil {
 		return c.worker.Close(ctx)
 	}
+	return joinConcurrent(func() error { return c.worker.Close(ctx) }, func() error { return c.logClient.Close(ctx) })
+}
+
+func joinConcurrent(left, right func() error) error {
 	results := make(chan error, 2)
-	go func() { results <- c.worker.Close(ctx) }()
-	go func() { results <- c.logClient.Close(ctx) }()
+	run := func(fn func() error) {
+		var err error
+		if ok := safeguard.Do(func() { err = fn() }, nil); !ok {
+			err = errors.New("internal panic during shutdown")
+		}
+		results <- err
+	}
+	go run(left)
+	go run(right)
 	return errors.Join(<-results, <-results)
 }
 

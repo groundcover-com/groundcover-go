@@ -145,9 +145,11 @@ logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client}))
 ```
 
 Records inherit identity/attributes from the request scope (`SetUser` /
-`WithScope`), can be scrubbed or sampled with `BeforeSendLog`, and are
-observable via `LogStats()` and the Prometheus bridge
-(`groundcover_sdk_logs_*`).
+`WithScope`) when emitted through the aggregate client (`Init` / `LogInfo`
+/ a handler with nil `Options.Client`). A standalone `logs.Client` has no
+error-tracking scope. Records can be scrubbed or sampled with
+`BeforeSendLog`, and are observable via `LogStats()` and the Prometheus
+bridge (`groundcover_sdk_logs_*`).
 
 ### Metrics — push without an agent
 

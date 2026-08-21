@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	groundcover "github.com/groundcover-com/groundcover-go"
 	"github.com/groundcover-com/groundcover-go/gcslog"
@@ -173,4 +174,34 @@ func TestHandlerRecoversPanickingLevelerAndEmitter(t *testing.T) {
 		Client: panicEmitter{},
 	}))
 	logger.Info("must not panic")
+}
+
+type panicValuer struct{}
+
+func (panicValuer) LogValue() slog.Value { panic("valuer") }
+
+func TestHandlerRecoversPanickingLogValuer(t *testing.T) {
+	sink := &capture{}
+	client := newTestClient(t, sink)
+	logger := slog.New(gcslog.NewHandler(gcslog.Options{Client: client.LogsClient()}))
+	logger.Info("must not panic", "k", panicValuer{})
+	_ = logger.With("k", panicValuer{})
+}
+
+func TestHandlerHonorsRecordTime(t *testing.T) {
+	sink := &capture{}
+	client := newTestClient(t, sink)
+	fixed := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	handler := gcslog.NewHandler(gcslog.Options{Client: client.LogsClient()})
+	record := slog.NewRecord(fixed, slog.LevelInfo, "stamped", 0)
+	if err := handler.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if err := client.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	got := decodeAll(t, sink)[0]["timestamp"]
+	if got != "2024-01-02T03:04:05Z" {
+		t.Fatalf("timestamp = %v, want record time", got)
+	}
 }

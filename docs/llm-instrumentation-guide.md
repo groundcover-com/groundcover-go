@@ -329,11 +329,13 @@ logger.Info("order created", "order_id", "o-9")
 ```
 
 The bridge import path is `github.com/groundcover-com/groundcover-go/gcslog`
-(stdlib-only, part of the core module). Records inherit identity/attributes
-from the context scope, exactly like error events. Scrub or sample records with
-`BeforeSendLog` (the log-signal counterpart of `BeforeSend`); identity hashing
-via `Hasher` applies to logs too. Always pass the request context so scope
-enrichment carries over.
+(stdlib-only, part of the core module). Leave `Options.Client` nil so records
+go through the aggregate client and inherit identity/attributes from the
+context scope, exactly like error events. A standalone `logs.Client` has no
+error-tracking scope. Scrub or sample records with `BeforeSendLog` (the
+log-signal counterpart of `BeforeSend`); identity hashing via `Hasher`
+applies to logs too. Always pass the request context (`InfoContext`) so
+scope enrichment carries over.
 
 ## 6c. Metrics (push, no agent or scrape endpoint)
 
