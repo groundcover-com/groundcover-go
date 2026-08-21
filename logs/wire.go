@@ -51,9 +51,9 @@ func buildWireRecord(record *Record, res resource) map[string]any {
 // the value is kept under a prefixed key rather than discarded.
 const reservedKeyPrefix = "attributes."
 
-// relocateReserved moves attributes whose keys are reserved out of the way. If
-// the prefixed key is already taken, the explicit one wins and the reserved
-// entry is dropped.
+// relocateReserved moves attributes whose keys are reserved out of the way.
+// When the first prefixed destination is already taken, it keeps prefixing
+// until it finds a free key so neither caller value is silently discarded.
 func relocateReserved(out map[string]any) {
 	var collisions []string
 	for key := range out {
@@ -65,8 +65,12 @@ func relocateReserved(out map[string]any) {
 		value := out[key]
 		delete(out, key)
 		relocated := reservedKeyPrefix + key
-		if _, taken := out[relocated]; !taken {
-			out[relocated] = value
+		for {
+			if _, taken := out[relocated]; !taken {
+				out[relocated] = value
+				break
+			}
+			relocated = reservedKeyPrefix + relocated
 		}
 	}
 }

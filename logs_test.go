@@ -264,6 +264,29 @@ func TestLogAttributesUnderIntakeExtractedKeysArePreserved(t *testing.T) {
 	}
 }
 
+func TestReservedLogAttributeRelocationDoesNotOverwriteExistingPrefix(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{EnableLogs: true}, sender)
+
+	c.LogInfo(context.Background(), "message", Attributes{
+		"msg":                       "reserved value",
+		"attributes.msg":            "first prefixed value",
+		"attributes.attributes.msg": "second prefixed value",
+	})
+	_ = c.Flush(context.Background())
+
+	attrs := decodeLogPayload(t, sender)[0]
+	for key, want := range map[string]string{
+		"attributes.msg":                       "first prefixed value",
+		"attributes.attributes.msg":            "second prefixed value",
+		"attributes.attributes.attributes.msg": "reserved value",
+	} {
+		if got := attrs[key]; got != want {
+			t.Errorf("%s = %v, want %q", key, got, want)
+		}
+	}
+}
+
 func TestLogScopeAndPerCallPrecedence(t *testing.T) {
 	sender := &testutil.MockSender{}
 	c := mustClient(t, Config{EnableLogs: true}, sender)
