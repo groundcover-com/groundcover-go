@@ -14,10 +14,12 @@ import (
 // statsSource is the subset of *groundcover.Client this collector needs.
 type statsSource interface {
 	Stats() groundcover.Stats
+	LogStats() groundcover.Stats
 }
 
-// Collector exposes a client's Stats() as Prometheus metrics. Counters are
-// reported with their cumulative values; gauges reflect the live queue depth.
+// Collector exposes a client's Stats() and LogStats() as Prometheus metrics.
+// Counters are reported with their cumulative values; gauges reflect the live
+// queue depth.
 type Collector struct {
 	set    *metrics.Set
 	source statsSource
@@ -51,6 +53,20 @@ func (c *Collector) register() {
 	g(`groundcover_sdk_subsystems_disabled_total`, func(s groundcover.Stats) int64 { return s.SubsystemsDisabled })
 	g(`groundcover_sdk_queue_pending{unit="items"}`, func(s groundcover.Stats) int64 { return s.QueuePendingItems })
 	g(`groundcover_sdk_queue_pending{unit="bytes"}`, func(s groundcover.Stats) int64 { return s.QueuePendingBytes })
+
+	// Log pipeline (EnableLogs). All-zero when the log signal is disabled.
+	lg := func(name string, f func(groundcover.Stats) int64) {
+		c.set.NewGauge(name, func() float64 { return float64(f(c.source.LogStats())) })
+	}
+	lg(`groundcover_sdk_logs_captured_total`, func(s groundcover.Stats) int64 { return s.Captured })
+	lg(`groundcover_sdk_logs_sent_total`, func(s groundcover.Stats) int64 { return s.Sent })
+	lg(`groundcover_sdk_logs_dropped_total{reason="overflow"}`, func(s groundcover.Stats) int64 { return s.DroppedOverflow })
+	lg(`groundcover_sdk_logs_dropped_total{reason="send_exhausted"}`, func(s groundcover.Stats) int64 { return s.DroppedSendExhausted })
+	lg(`groundcover_sdk_logs_dropped_total{reason="before_send"}`, func(s groundcover.Stats) int64 { return s.DroppedBeforeSend })
+	lg(`groundcover_sdk_logs_retries_total`, func(s groundcover.Stats) int64 { return s.Retries })
+	lg(`groundcover_sdk_logs_rate_limited_total`, func(s groundcover.Stats) int64 { return s.RateLimited })
+	lg(`groundcover_sdk_logs_queue_pending{unit="items"}`, func(s groundcover.Stats) int64 { return s.QueuePendingItems })
+	lg(`groundcover_sdk_logs_queue_pending{unit="bytes"}`, func(s groundcover.Stats) int64 { return s.QueuePendingBytes })
 }
 
 // Set returns the underlying metrics set, for callers that compose multiple sets.
