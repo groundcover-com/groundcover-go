@@ -411,8 +411,8 @@ type cappedBuffer struct {
 	overflow bool
 }
 
-func newCappedBuffer(max int) *cappedBuffer {
-	return &cappedBuffer{max: max}
+func newCappedBuffer(maxBytes int) *cappedBuffer {
+	return &cappedBuffer{max: maxBytes}
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
