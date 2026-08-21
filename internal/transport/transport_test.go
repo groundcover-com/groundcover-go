@@ -113,6 +113,38 @@ func TestHTTPSenderNetworkError(t *testing.T) {
 	}
 }
 
+func TestHTTPSenderRefusesCredentialRedirect(t *testing.T) {
+	var receivedAuth atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth.Store(r.Header.Get("Authorization") != "")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	callerClient := origin.Client()
+	if callerClient.CheckRedirect != nil {
+		t.Fatal("test client unexpectedly has a redirect policy")
+	}
+	sender := transport.NewHTTPSender(transport.HTTPConfig{
+		Endpoint:     origin.URL,
+		IngestionKey: "write-secret",
+		Client:       callerClient,
+	})
+	if err := sender.Send(context.Background(), []byte(`{}`)); err == nil {
+		t.Fatal("Send unexpectedly followed a cross-origin redirect")
+	}
+	if receivedAuth.Load() {
+		t.Fatal("redirect target received the ingestion credential")
+	}
+	if callerClient.CheckRedirect != nil {
+		t.Fatal("NewHTTPSender mutated the caller-owned HTTP client")
+	}
+}
+
 func TestWorkerBatchingAndFlush(t *testing.T) {
 	sender := &testutil.MockSender{}
 	obs := &countObserver{}

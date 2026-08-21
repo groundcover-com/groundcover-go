@@ -199,8 +199,12 @@ func (c Config) validate() error {
 	// Catch an endpoint no request can be built from here, at construction,
 	// rather than as a push failure repeating every interval. A disabled
 	// client never pushes, so it needs no endpoint.
-	if dsn != "" || override != "" {
-		if err := endpoint.Validate(c.pushEndpoint()); err != nil {
+	if dsn != "" {
+		if err := endpoint.ValidateDSN(c.DSN); err != nil {
+			return fmt.Errorf("metrics: %w", err)
+		}
+	} else if override != "" {
+		if err := endpoint.Validate(override); err != nil {
 			return fmt.Errorf("metrics: %w", err)
 		}
 	}

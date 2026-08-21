@@ -86,7 +86,7 @@ func (c Config) validate() error {
 	}
 	// Catch a DSN no request can be built from here, at construction, rather
 	// than as a delivery failure repeating for the life of the process.
-	if err := endpoint.Validate(c.endpoint()); err != nil {
+	if err := endpoint.ValidateDSN(c.DSN); err != nil {
 		return fmt.Errorf("groundcover/logs: %w", err)
 	}
 	return nil

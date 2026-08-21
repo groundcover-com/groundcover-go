@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/groundcover-com/groundcover-go/internal/endpoint"
 )
 
 // maxErrorBodyBytes bounds how much of an error response body we read for
@@ -91,6 +93,12 @@ func NewHTTPSender(cfg HTTPConfig) *HTTPSender {
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{Timeout: 30 * time.Second}
 	}
+	// Do not mutate a caller-owned client. Every request carries an ingestion
+	// credential, so redirects must not forward it to another host or
+	// downgrade it from HTTPS to plaintext.
+	cloned := *cfg.Client
+	cloned.CheckRedirect = endpoint.SafeRedirectPolicy(cloned.CheckRedirect)
+	cfg.Client = &cloned
 	return &HTTPSender{cfg: cfg}
 }
 

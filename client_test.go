@@ -365,7 +365,12 @@ func TestNewRequiresDSN(t *testing.T) {
 // A DSN that cannot produce a usable URL is a configuration error, reported at
 // construction rather than as a delivery failure for the life of the process.
 func TestNewRejectsUnusableDSN(t *testing.T) {
-	for _, dsn := range []string{"ftp://host.example", "https://", "://host.example"} {
+	for _, dsn := range []string{
+		"ftp://host.example", "https://", "://host.example",
+		"https://host.example?tenant=x",
+		"https://host.example#fragment",
+		"https://user:password@host.example",
+	} {
 		if _, err := New(Config{DSN: dsn}); err == nil {
 			t.Errorf("New(DSN=%q) = nil error, want a configuration error", dsn)
 		}

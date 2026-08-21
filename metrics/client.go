@@ -8,11 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/groundcover-com/groundcover-go/internal/endpoint"
 	"github.com/groundcover-com/groundcover-go/internal/safeguard"
 )
 
@@ -142,7 +143,7 @@ func New(cfg Config, sources ...MetricSource) (*Client, error) {
 		cloned := *client.httpClient
 		client.httpClient = &cloned
 	}
-	client.httpClient.CheckRedirect = safeRedirectPolicy(client.httpClient.CheckRedirect)
+	client.httpClient.CheckRedirect = endpoint.SafeRedirectPolicy(client.httpClient.CheckRedirect)
 	return client, nil
 }
 
@@ -444,11 +445,32 @@ func (c *Client) send(ctx context.Context, body []byte) error {
 		return nil
 	}
 	excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-	bodyExcerpt := strings.TrimSpace(string(excerpt))
-	if c.cfg.IngestionKey != "" {
-		bodyExcerpt = strings.ReplaceAll(bodyExcerpt, c.cfg.IngestionKey, "[REDACTED]")
-	}
+	bodyExcerpt := redactResponseExcerpt(strings.TrimSpace(string(excerpt)), c.cfg.IngestionKey, c.cfg.Headers)
 	return &StatusError{StatusCode: resp.StatusCode, Body: bodyExcerpt}
+}
+
+// redactResponseExcerpt removes credentials the server may have echoed. Every
+// configured header value is caller-controlled and may be a secret, not only
+// the SDK's apikey.
+func redactResponseExcerpt(excerpt, ingestionKey string, headers http.Header) string {
+	secrets := make([]string, 0, len(headers)+1)
+	if ingestionKey != "" {
+		secrets = append(secrets, ingestionKey)
+	}
+	for _, values := range headers {
+		for _, value := range values {
+			if value != "" {
+				secrets = append(secrets, value)
+			}
+		}
+	}
+	// Replace longer overlapping values first so a shorter value cannot expose
+	// the unmatched suffix of a longer credential.
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	for _, secret := range secrets {
+		excerpt = strings.ReplaceAll(excerpt, secret, "[REDACTED]")
+	}
+	return excerpt
 }
 
 type cappedBuffer struct {
@@ -488,35 +510,6 @@ func cloneLabels(labels map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func safeRedirectPolicy(previous func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
-	return func(req *http.Request, via []*http.Request) error {
-		if len(via) > 0 && !sameOrigin(via[0].URL, req.URL) {
-			return errors.New("metrics: refusing cross-origin redirect")
-		}
-		if previous != nil {
-			return previous(req, via)
-		}
-		if len(via) >= 10 {
-			return errors.New("metrics: stopped after 10 redirects")
-		}
-		return nil
-	}
-}
-
-// sameOrigin reports whether the apikey header may follow a redirect from left
-// to right. Identical origins always may; a same-host http to https upgrade is
-// allowed too, since gateways commonly redirect to TLS. A downgrade or any
-// other host is refused.
-func sameOrigin(left, right *url.URL) bool {
-	if !strings.EqualFold(left.Host, right.Host) {
-		return false
-	}
-	if strings.EqualFold(left.Scheme, right.Scheme) {
-		return true
-	}
-	return strings.EqualFold(left.Scheme, "http") && strings.EqualFold(right.Scheme, "https")
 }
 
 // gzipBytes returns the gzip-compressed form of b.

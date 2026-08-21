@@ -165,7 +165,12 @@ func TestStandaloneRejectsUnusableDSN(t *testing.T) {
 	if _, err := logs.New(logs.Config{}); !errors.Is(err, logs.ErrMissingDSN) {
 		t.Fatalf("New(no DSN) = %v, want ErrMissingDSN", err)
 	}
-	for _, dsn := range []string{"ftp://host.example", "https://", "://host.example"} {
+	for _, dsn := range []string{
+		"ftp://host.example", "https://", "://host.example",
+		"https://host.example?tenant=x",
+		"https://host.example#fragment",
+		"https://user:password@host.example",
+	} {
 		if _, err := logs.New(logs.Config{DSN: dsn}); err == nil {
 			t.Errorf("New(DSN=%q) = nil error, want a configuration error", dsn)
 		}

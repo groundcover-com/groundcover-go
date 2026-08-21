@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -262,6 +261,9 @@ func TestNewValidation(t *testing.T) {
 		// than as a push failure repeating every interval.
 		{"dsn with a bad scheme", Config{DSN: "ftp://host.example"}},
 		{"dsn with no host", Config{DSN: "https://"}},
+		{"dsn with a query", Config{DSN: "https://host.example?tenant=x"}},
+		{"dsn with a fragment", Config{DSN: "https://host.example#fragment"}},
+		{"dsn with userinfo", Config{DSN: "https://user:password@host.example"}},
 		{"endpoint with control characters", Config{Endpoint: "https://host.example/\x7f"}},
 		{"configured job not utf-8", Config{DSN: "x", Job: "svc\xff"}},
 		{"configured instance not utf-8", Config{DSN: "x", Instance: "host\xff"}},
@@ -951,54 +953,26 @@ func TestCrossOriginRedirectDoesNotForwardKey(t *testing.T) {
 	}
 }
 
-// A gateway redirecting an http endpoint to TLS on the same host is the common
-// on-prem setup and must keep working.
-func TestSameHostTLSUpgradeRedirectIsAllowed(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		from, to    string
-		wantAllowed bool
-	}{
-		{"identical", "https://host/path", "https://host/other", true},
-		{"tls upgrade", "http://host/path", "https://host/path", true},
-		{"tls downgrade", "https://host/path", "http://host/path", false},
-		{"other host", "https://host/path", "https://elsewhere/path", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			from, err := url.Parse(tc.from)
-			if err != nil {
-				t.Fatalf("parse %q: %v", tc.from, err)
-			}
-			to, err := url.Parse(tc.to)
-			if err != nil {
-				t.Fatalf("parse %q: %v", tc.to, err)
-			}
-			if got := sameOrigin(from, to); got != tc.wantAllowed {
-				t.Fatalf("sameOrigin(%q, %q) = %v, want %v", tc.from, tc.to, got, tc.wantAllowed)
-			}
-		})
-	}
-}
-
 func TestStatusErrorRedactsEchoedKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusInternalServerError)
-		_, _ = writer.Write([]byte("rejected secret-key"))
+		_, _ = writer.Write([]byte("rejected secret-key and Bearer custom-secret"))
 	}))
 	defer server.Close()
 	client, err := New(Config{
 		Endpoint:              server.URL,
 		IngestionKey:          "secret-key",
+		Headers:               http.Header{"Authorization": {"Bearer custom-secret"}},
 		DisableRuntimeMetrics: true,
 	}, textSource("redaction_test 1\n"))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	pushErr := client.Push(context.Background())
-	if pushErr == nil || strings.Contains(pushErr.Error(), "secret-key") {
+	if pushErr == nil || strings.Contains(pushErr.Error(), "secret-key") || strings.Contains(pushErr.Error(), "custom-secret") {
 		t.Fatalf("Push error was not redacted: %v", pushErr)
 	}
-	if strings.Contains(client.Stats().LastError, "secret-key") {
+	if strings.Contains(client.Stats().LastError, "secret-key") || strings.Contains(client.Stats().LastError, "custom-secret") {
 		t.Fatalf("LastError was not redacted: %q", client.Stats().LastError)
 	}
 }

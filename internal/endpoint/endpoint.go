@@ -5,7 +5,9 @@
 package endpoint
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -17,7 +19,38 @@ func Resolve(dsn, path string) string {
 	if base != "" && !hasScheme(base) {
 		base = "https://" + base
 	}
-	return strings.TrimRight(base, "/") + path
+	parsed, err := url.Parse(base)
+	if err != nil {
+		// Validation reports the useful error before callers resolve a DSN.
+		return strings.TrimRight(base, "/") + path
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + path
+	return parsed.String()
+}
+
+// ValidateDSN reports whether dsn is a usable base URL. Query parameters,
+// fragments, and userinfo are refused: the SDK owns the intake path, appending
+// it to a raw DSN with any of those components silently targets the wrong URL,
+// and credentials in userinfo must not be propagated.
+func ValidateDSN(dsn string) error {
+	base := strings.TrimSpace(dsn)
+	if base != "" && !hasScheme(base) {
+		base = "https://" + base
+	}
+	if err := Validate(base); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(base)
+	switch {
+	case parsed.User != nil:
+		return fmt.Errorf("DSN %q must not contain userinfo", dsn)
+	case parsed.RawQuery != "":
+		return fmt.Errorf("DSN %q must not contain a query", dsn)
+	case parsed.Fragment != "":
+		return fmt.Errorf("DSN %q must not contain a fragment", dsn)
+	default:
+		return nil
+	}
 }
 
 // Validate reports whether target is an absolute http(s) URL a request can be
@@ -60,4 +93,32 @@ func hasScheme(target string) bool {
 		}
 	}
 	return true
+}
+
+// SafeRedirectPolicy returns an HTTP redirect policy that preserves a caller's
+// policy while refusing to forward credentials across hosts or from HTTPS to
+// HTTP. Identical origins and same-host HTTP-to-HTTPS upgrades are allowed.
+func SafeRedirectPolicy(previous func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && !sameOrigin(via[0].URL, req.URL) {
+			return errors.New("refusing unsafe redirect")
+		}
+		if previous != nil {
+			return previous(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+}
+
+func sameOrigin(left, right *url.URL) bool {
+	if !strings.EqualFold(left.Host, right.Host) {
+		return false
+	}
+	if strings.EqualFold(left.Scheme, right.Scheme) {
+		return true
+	}
+	return strings.EqualFold(left.Scheme, "http") && strings.EqualFold(right.Scheme, "https")
 }
