@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // sample is one parsed exposition sample line.
@@ -58,6 +59,16 @@ func (r *renderer) addSource(sourceName string, text []byte) (srcErrs []error, f
 		line = bytes.TrimRight(line, "\r")
 		line = bytes.TrimLeft(line, " \t")
 		if len(line) == 0 {
+			continue
+		}
+		// The exposition format is UTF-8; passing arbitrary bytes through would
+		// risk the backend rejecting the whole body over one bad line.
+		if !utf8.Valid(line) {
+			r.malformed++
+			if !malformedReported {
+				malformedReported = true
+				srcErrs = append(srcErrs, fmt.Errorf("metric source %q: line %d is not valid UTF-8", sourceName, lineNo))
+			}
 			continue
 		}
 		if line[0] == '#' {

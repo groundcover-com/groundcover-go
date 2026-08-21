@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 // render is a test helper returning the registry's exposition text.
@@ -181,6 +182,26 @@ func TestRegistryLabelValueEscaping(t *testing.T) {
 	want := `g{msg="a \"b\" \\ c\nd"} 1` + "\n"
 	if got := render(r); !strings.Contains(got, want) {
 		t.Errorf("escaping wrong:\n%s\nwant contains:\n%s", got, want)
+	}
+}
+
+// Request-derived label values can carry arbitrary bytes; one such series must
+// not render an out-of-spec body on every later push.
+func TestRegistryRejectsNonUTF8LabelValues(t *testing.T) {
+	r := NewRegistry()
+	r.Counter("http_requests_total", map[string]string{"path": "/a\xff\xfeb"}).Inc()
+	r.Gauge("ok", nil).Set(1)
+
+	got := render(r)
+	if !utf8.ValidString(got) {
+		t.Fatalf("rendered body is not valid UTF-8: %q", got)
+	}
+	if strings.Contains(got, "http_requests_total") {
+		t.Errorf("invalid series was rendered:\n%s", got)
+	}
+	err := r.Err()
+	if err == nil || !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Errorf("Err() = %v, want a UTF-8 validation error", err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 // metricType is the exposition type of a metric family.
@@ -25,9 +26,9 @@ const (
 // MetricSource. The zero value is not usable; construct with NewRegistry.
 //
 // Instrument lookups are idempotent: the same (name, labels) tuple always
-// returns the same instrument. Invalid metric or label names never panic;
-// they return a detached no-op instrument and record an error retrievable
-// via Err.
+// returns the same instrument. Invalid metric names, label names, or label
+// values never panic; they return a detached no-op instrument and record an
+// error retrievable via Err.
 type Registry struct {
 	mu       sync.RWMutex
 	families map[string]*family
@@ -238,14 +239,21 @@ func (r *Registry) recordErrLocked(err error) {
 	}
 }
 
-// validateSeries checks the metric name and label names for one series.
+// validateSeries checks the metric name and the label names and values for one
+// series.
 func validateSeries(name string, labels map[string]string, typ metricType) error {
 	if !isValidMetricName(name) {
 		return fmt.Errorf("metrics: invalid metric name %q", name)
 	}
-	for labelName := range labels {
+	for labelName, labelValue := range labels {
 		if !isValidLabelName(labelName) {
 			return fmt.Errorf("metrics: invalid label name %q on %q", labelName, name)
+		}
+		// Request-derived label values are a common source of arbitrary bytes.
+		// Rejecting them here keeps a single bad series from rendering an
+		// out-of-spec body on every subsequent push.
+		if !utf8.ValidString(labelValue) {
+			return fmt.Errorf("metrics: label %q on %q has a value that is not valid UTF-8", labelName, name)
 		}
 		if strings.HasPrefix(labelName, "__") {
 			return fmt.Errorf("metrics: label name %q on %q is reserved", labelName, name)

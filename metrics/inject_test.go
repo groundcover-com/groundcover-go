@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // textSource is an MetricSource emitting a fixed exposition text.
@@ -149,6 +150,34 @@ func TestIndentedPrometheusCommentsAreAccepted(t *testing.T) {
 	body := cs.last().body
 	if !strings.Contains(body, "# TYPE indented_metric gauge") || !strings.Contains(body, "indented_metric{") {
 		t.Fatalf("indented exposition dropped:\n%s", body)
+	}
+}
+
+// A source line with arbitrary bytes is dropped and counted, and the healthy
+// lines around it are still delivered as a valid UTF-8 body.
+func TestNonUTF8SourceLineIsDroppedNotForwarded(t *testing.T) {
+	cs := newCaptureServer(t)
+	source := textSource("good_metric 1\nbad_metric{path=\"/a\xff\xfeb\"} 2\nother_metric 3\n")
+	client, err := New(testConfig(cs), source)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	err = client.Push(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("Push error = %v, want a UTF-8 report", err)
+	}
+	body := cs.last().body
+	if !utf8.ValidString(body) {
+		t.Fatalf("delivered body is not valid UTF-8: %q", body)
+	}
+	if !strings.Contains(body, "good_metric{") || !strings.Contains(body, "other_metric{") {
+		t.Fatalf("healthy samples dropped:\n%s", body)
+	}
+	if strings.Contains(body, "bad_metric") {
+		t.Fatalf("invalid line forwarded:\n%s", body)
+	}
+	if stats := client.Stats(); stats.MalformedLines != 1 {
+		t.Fatalf("MalformedLines = %d, want 1", stats.MalformedLines)
 	}
 }
 
