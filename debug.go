@@ -39,6 +39,21 @@ func renderDebug(e *Event) string {
 	return b.String()
 }
 
+// renderLogDebug formats a finalized log record as a compact single-block line
+// for local development. Like renderDebug, it renders the post-scrub,
+// post-hash record.
+func renderLogDebug(l *Log) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[groundcover] %s log  %s\n", l.Level, truncateValue(l.Message))
+	if !l.User.isZero() {
+		fmt.Fprintf(&b, "  user: %s\n", userSummary(l.User))
+	}
+	if len(l.Attributes) > 0 {
+		fmt.Fprintf(&b, "  attrs: %s\n", attrsSummary(l.Attributes))
+	}
+	return b.String()
+}
+
 func userSummary(u User) string {
 	parts := make([]string, 0, 4)
 	if u.ID != "" {

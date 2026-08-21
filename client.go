@@ -37,6 +37,13 @@ type Client struct {
 	ring   *ringbuf.Buffer[*Event]
 	worker *transport.Worker[*Event]
 
+	// Log pipeline: a separate bounded buffer and worker so log volume can
+	// never evict or delay error events. Constructed only when EnableLogs is
+	// set; logMetrics always exists so LogStats is safe to call.
+	logMetrics *selfmetrics.Metrics
+	logRing    *ringbuf.Buffer[*Log]
+	logWorker  *transport.Worker[*Log]
+
 	debug    bool
 	debugOut io.Writer
 }
@@ -53,7 +60,7 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	}
 	resolved := cfg.withDefaults()
 
-	c := &Client{metrics: selfmetrics.New()}
+	c := &Client{metrics: selfmetrics.New(), logMetrics: selfmetrics.New()}
 	c.cfg.Store(&resolved)
 	if resolved.Disabled {
 		c.disabled = true
@@ -94,18 +101,28 @@ func newClient(cfg Config, sender transport.Sender) (*Client, error) {
 	res := c.res
 	encode := func(items []*Event) ([]byte, error) { return encodeBatch(items, res) }
 
+	workerCfg := transport.WorkerConfig{
+		BatchSize:        resolved.BatchSize,
+		MaxBatchBytes:    resolved.MaxBatchBytes,
+		FlushInterval:    resolved.FlushInterval,
+		MaxRetries:       resolved.MaxRetries,
+		RetryMax:         resolved.RetryMax,
+		RateLimitBackoff: resolved.RateLimitBackoff,
+	}
+
 	c.worker = transport.NewWorker[*Event](
-		c.ring, sender, encode, metricsObserver{m: c.metrics}, c.throttle, c.onPanic,
-		transport.WorkerConfig{
-			BatchSize:        resolved.BatchSize,
-			MaxBatchBytes:    resolved.MaxBatchBytes,
-			FlushInterval:    resolved.FlushInterval,
-			MaxRetries:       resolved.MaxRetries,
-			RetryMax:         resolved.RetryMax,
-			RateLimitBackoff: resolved.RateLimitBackoff,
-		},
+		c.ring, sender, encode, metricsObserver{m: c.metrics}, c.throttle, c.onPanic, workerCfg,
 	)
 	c.worker.Start()
+
+	if resolved.EnableLogs {
+		c.logRing = ringbuf.New[*Log](resolved.MaxQueue, resolved.MaxBytes, estimateLogSize)
+		encodeLogs := func(items []*Log) ([]byte, error) { return encodeLogBatch(items, res) }
+		c.logWorker = transport.NewWorker[*Log](
+			c.logRing, sender, encodeLogs, metricsObserver{m: c.logMetrics}, c.throttle, c.onPanic, workerCfg,
+		)
+		c.logWorker.Start()
+	}
 	return c, nil
 }
 
@@ -349,12 +366,18 @@ func (c *Client) WithIsolatedScope(ctx context.Context) context.Context {
 	return isolatedScopeContext(ctx)
 }
 
-// Flush blocks until pending events are delivered or ctx expires.
+// Flush blocks until pending events and logs are delivered or ctx expires.
 func (c *Client) Flush(ctx context.Context) error {
 	if c.disabled {
 		return nil
 	}
-	return c.worker.Flush(ctx)
+	err := c.worker.Flush(ctx)
+	if c.logWorker != nil {
+		if logErr := c.logWorker.Flush(ctx); err == nil {
+			err = logErr
+		}
+	}
+	return err
 }
 
 // Close flushes and stops the client. It is idempotent and bounded by ctx.
@@ -362,7 +385,13 @@ func (c *Client) Close(ctx context.Context) error {
 	if c.disabled {
 		return nil
 	}
-	return c.worker.Close(ctx)
+	err := c.worker.Close(ctx)
+	if c.logWorker != nil {
+		if logErr := c.logWorker.Close(ctx); err == nil {
+			err = logErr
+		}
+	}
+	return err
 }
 
 // FlushTimeout is convenience sugar for Flush with a fresh context bounded by d.

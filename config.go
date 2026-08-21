@@ -76,10 +76,22 @@ type Config struct {
 	// StackDepthMax caps captured stack frames (default 128).
 	StackDepthMax int
 
-	// OnDrop observes dropped events (also recorded as a self-metric).
+	// OnDrop observes dropped events (also recorded as a self-metric). It does
+	// not observe dropped log records; those are counted in LogStats.
 	OnDrop func(n int)
 	// BeforeSend can scrub or sample an event; returning nil drops it.
 	BeforeSend func(*Event) *Event
+
+	// EnableLogs turns on the log signal: EmitLog / Log* calls (and bridges
+	// such as gcslog) capture records and deliver them directly to
+	// groundcover, with no agent or file tailer. Off by default; when false
+	// all log APIs are no-ops. Logs travel on their own bounded pipeline
+	// (sized by the same MaxQueue/MaxBytes/BatchSize knobs) so log volume
+	// never evicts or delays error events.
+	EnableLogs bool
+	// BeforeSendLog can scrub or sample a log record; returning nil drops it.
+	// It runs before identity hashing, like BeforeSend.
+	BeforeSendLog func(*Log) *Log
 	// Hasher optionally pseudonymizes user.id / user.email via keyed HMAC.
 	Hasher IdentityHasher
 	// Logger receives throttled SDK-internal logs.
