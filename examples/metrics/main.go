@@ -38,8 +38,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "start: %v\n", err)
 		os.Exit(1)
 	}
-	defer func() { _ = stop(context.Background()) }()
-
 	// Instruments are get-or-create: the same (name, labels) tuple always
 	// returns the same instrument. The lookup takes a lock and builds a label
 	// signature, so on a hot path hold the instrument in a variable instead of
@@ -48,10 +46,10 @@ func main() {
 	reg.Gauge("example_queue_depth", nil).Set(17)
 	reg.Histogram("example_request_seconds", nil, nil).Observe(0.042)
 
-	// One synchronous push so the example delivers before exiting; long-lived
-	// services just rely on the background interval.
-	if err := client.Push(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "push: %v\n", err)
+	// Stopping flushes whatever accumulated since the last interval, so a
+	// short-lived program still delivers everything it recorded.
+	if err := stop(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "stop: %v\n", err)
 	}
 	fmt.Printf("metrics pipeline stats: %+v\n", client.Stats())
 }

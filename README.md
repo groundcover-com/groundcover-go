@@ -181,7 +181,7 @@ stop, err := client.Start(ctx) // immediate first push, then every 30s
 if err != nil {
 	return err
 }
-defer stop(context.Background())
+defer stop(context.Background()) // also flushes the final samples
 
 reg.Counter("orders_created_total", nil).Inc()
 reg.Gauge("queue_depth", nil).Set(17)

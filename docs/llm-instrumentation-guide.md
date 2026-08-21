@@ -351,7 +351,7 @@ client, err := metrics.New(metrics.Config{
 	Job: "checkout",                    // defaults to OTEL_SERVICE_NAME / GC_SERVICE_NAME
 }, reg)
 stop, err := client.Start(ctx) // immediate first push, then every 30s
-defer stop(context.Background())
+defer stop(context.Background()) // also flushes the final samples
 
 reg.Counter("orders_created_total", nil).Inc()
 reg.Gauge("queue_depth", nil).Set(float64(depth))

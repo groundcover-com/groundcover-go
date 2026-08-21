@@ -479,6 +479,157 @@ func TestStartIntervalPushes(t *testing.T) {
 	}
 }
 
+// There is no later scrape in a push model, so Stop delivers what accumulated
+// since the last interval instead of losing it.
+func TestStopPushesFinalSamples(t *testing.T) {
+	cs := newCaptureServer(t)
+	reg := NewRegistry()
+	cfg := testConfig(cs)
+	cfg.Interval = time.Hour // only the immediate push and the final one
+	client, err := New(cfg, reg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	stop, err := client.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for cs.count() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Recorded after the first push: only a shutdown push can deliver it.
+	reg.Counter("orders_total", nil).Add(7)
+	if err := stop(context.Background()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if got := cs.count(); got != 2 {
+		t.Fatalf("got %d pushes, want 2 (immediate + final)", got)
+	}
+	if body := cs.last().body; !strings.Contains(body, "orders_total{") || !strings.Contains(body, " 7\n") {
+		t.Errorf("final push missing the last samples:\n%s", body)
+	}
+
+	// Stop is idempotent: a second call pushes nothing more.
+	if err := stop(context.Background()); err != nil {
+		t.Fatalf("second stop: %v", err)
+	}
+	if got := cs.count(); got != 2 {
+		t.Errorf("got %d pushes after a second stop, want 2", got)
+	}
+}
+
+// A failing final push is reported like any other push, not as a stop error:
+// the worker did stop, and a shutdown path must not mistake a telemetry
+// failure for a failure to shut down.
+func TestStopReportsFinalPushFailureThroughOnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	var mu sync.Mutex
+	var errCount int
+	cfg := Config{
+		Endpoint:     srv.URL,
+		IngestionKey: "k",
+		Job:          "test-job",
+		Instance:     "test-instance",
+		Interval:     time.Hour,
+		OnError: func(error) {
+			mu.Lock()
+			errCount++
+			mu.Unlock()
+		},
+	}
+	client, err := New(cfg, NewRegistry())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	stop, err := client.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := errCount
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := stop(context.Background()); err != nil {
+		t.Fatalf("stop = %v, want nil: the worker stopped", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if errCount < 2 {
+		t.Errorf("OnError called %d times, want >= 2 (interval push and final push)", errCount)
+	}
+	if stats := client.Stats(); stats.PushFailures < 2 {
+		t.Errorf("PushFailures = %d, want >= 2", stats.PushFailures)
+	}
+}
+
+// A Stop whose deadline is spent abandons the push in flight and does not
+// start another. A later Stop still flushes, so a caller that budgets too
+// little time loses nothing it retries for.
+func TestStopWithExpiredContextAbandonsTheInFlightPush(t *testing.T) {
+	var requests atomic.Int64
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := New(Config{
+		DSN:                   srv.URL,
+		IngestionKey:          "k",
+		Job:                   "j",
+		Instance:              "i",
+		Interval:              time.Hour,
+		Timeout:               time.Hour,
+		DisableRuntimeMetrics: true,
+	}, NewRegistry())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	stop, err := client.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// The worker is now blocked in its first push, so Stop cannot complete.
+	deadline := time.Now().Add(5 * time.Second)
+	for requests.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := stop(expired); err == nil {
+		t.Error("stop(expired) = nil, want the context error")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Errorf("%d requests, want 1: an expired Stop must not start a push", got)
+	}
+
+	close(release)
+	if err := stop(context.Background()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Errorf("%d requests, want 2: the retried Stop must flush", got)
+	}
+}
+
 func TestPushesNeverOverlap(t *testing.T) {
 	var inFlight, maxInFlight atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -614,10 +765,11 @@ func TestStopHonorsItsContext(t *testing.T) {
 	}
 	expired, cancel := context.WithCancel(context.Background())
 	cancel()
-	// The worker exits promptly on stop (its in-flight request context is
-	// canceled), so even an expired stop context usually succeeds; either
-	// outcome is acceptable, what matters is that stop returns.
-	_ = stop(expired)
+	// The worker is blocked in a push, so a spent deadline returns without
+	// waiting for it.
+	if err := stop(expired); err == nil {
+		t.Error("stop(expired) = nil, want the context error")
+	}
 	close(release)
 	if err := stop(context.Background()); err != nil {
 		t.Fatalf("stop: %v", err)

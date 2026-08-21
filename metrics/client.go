@@ -68,7 +68,12 @@ type sourceEntry struct {
 }
 
 // StopFunc stops the background worker started by Start. It cancels the
-// worker and waits for it to exit, bounded by ctx. It is idempotent.
+// worker, waits for it to exit, and then performs one final push, all bounded
+// by ctx. The final push matters because there is no later scrape in a push
+// model: without it, everything recorded since the last interval is lost.
+//
+// It is idempotent, and returns only ctx's error: a failed final push is
+// reported through Config.OnError and Stats, as every other push is.
 type StopFunc func(ctx context.Context) error
 
 // Client is a standalone push client that renders MetricSource sources and
@@ -178,9 +183,10 @@ func (c *Client) Push(ctx context.Context) error {
 // Start launches the background worker: an immediate first push, then one
 // push every Config.Interval. Push failures are surfaced through
 // Config.OnError and never stop the worker; it stops when ctx is canceled or
-// the returned StopFunc is called. Calling Start on a client whose worker is
-// already running returns ErrAlreadyStarted; a stopped client may be started
-// again.
+// the returned StopFunc is called. Prefer StopFunc over cancelling ctx, since
+// it also flushes what accumulated since the last interval. Calling Start on a
+// client whose worker is already running returns ErrAlreadyStarted; a stopped
+// client may be started again.
 func (c *Client) Start(ctx context.Context) (StopFunc, error) {
 	if c == nil || c.disabled {
 		return func(context.Context) error { return nil }, nil
@@ -194,25 +200,40 @@ func (c *Client) Start(ctx context.Context) (StopFunc, error) {
 	c.lifecycleMu.Unlock()
 
 	workerCtx, cancel := context.WithCancel(ctx)
+	// Closing stopLoop retires the worker without cancelling a push it is in
+	// the middle of, so the final push below never races one the intake is
+	// still processing. Cancelling workerCtx is the harsher path, taken when
+	// the caller's shutdown deadline runs out.
+	stopLoop := make(chan struct{})
 	done := make(chan struct{})
 	safeguard.Go(func() {
 		defer close(done)
+		defer cancel()
 		defer func() {
 			c.lifecycleMu.Lock()
 			c.running = false
 			c.lifecycleMu.Unlock()
 		}()
-		c.runLoop(workerCtx)
+		c.runLoop(workerCtx, stopLoop)
 	}, c.onPanic)
 
+	var retire, finalPush sync.Once
 	stop := func(stopCtx context.Context) error {
-		cancel()
+		retire.Do(func() { close(stopLoop) })
 		select {
 		case <-done:
-			return nil
 		case <-stopCtx.Done():
+			// The shutdown budget is spent: abandon the push in flight.
+			cancel()
 			return stopCtx.Err()
 		}
+		// A push model has no later scrape, so whatever accumulated since the
+		// last interval is delivered here or lost. The push is bounded by the
+		// caller's context and only runs on the first Stop. Its failure is
+		// reported through OnError and Stats like any other push, not as a
+		// stop error: the worker did stop.
+		finalPush.Do(func() { _ = c.pushAndReport(stopCtx) })
+		return nil
 	}
 	return stop, nil
 }
@@ -229,24 +250,28 @@ func (c *Client) Stats() Stats {
 }
 
 // runLoop is the background worker body: immediate first push, then one push
-// per interval until ctx is canceled. A failed push never exits the loop.
-func (c *Client) runLoop(ctx context.Context) {
-	c.pushAndReport(ctx)
+// per interval until ctx is canceled or stopLoop is closed. A failed push never
+// exits the loop.
+func (c *Client) runLoop(ctx context.Context, stopLoop <-chan struct{}) {
+	_ = c.pushAndReport(ctx)
 	ticker := time.NewTicker(c.cfg.Interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-stopLoop:
+			return
 		case <-ticker.C:
-			c.pushAndReport(ctx)
+			_ = c.pushAndReport(ctx)
 		}
 	}
 }
 
 // pushAndReport runs one guarded push and surfaces a failure through the
-// panic-guarded OnError callback.
-func (c *Client) pushAndReport(ctx context.Context) {
+// panic-guarded OnError callback. It returns the failure for callers that also
+// want to report it; the background loop ignores it and keeps running.
+func (c *Client) pushAndReport(ctx context.Context) error {
 	var err error
 	if ok := safeguard.Do(func() { err = c.push(ctx) }, c.onPanic); !ok {
 		err = errors.New("metrics: internal panic during push")
@@ -258,6 +283,7 @@ func (c *Client) pushAndReport(ctx context.Context) {
 			c.stats.sourcePanics.Add(1)
 		})
 	}
+	return err
 }
 
 // push renders all sources and delivers the body. It holds pushGate for the
