@@ -260,7 +260,7 @@ func (c *Client) pushAndReport(ctx context.Context) {
 	}
 }
 
-// push renders all sources and delivers the body. It holds pushMu for the
+// push renders all sources and delivers the body. It holds pushGate for the
 // full render+send so pushes never overlap.
 func (c *Client) push(ctx context.Context) error {
 	select {

@@ -413,3 +413,42 @@ func TestWorkerCloseIdempotent(t *testing.T) {
 		t.Fatalf("close should drain remaining items, got %d", ring.Len())
 	}
 }
+
+func TestWorkerCloseTimesOutWhileFlushHoldsGate(t *testing.T) {
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	sender := &testutil.MockSender{
+		Responder: func(int, []byte) error {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+			<-unblock
+			return nil
+		},
+	}
+	w, ring := newWorker(t, sender, &countObserver{}, transport.WorkerConfig{BatchSize: 1})
+	w.Start()
+	ring.Push(1)
+
+	flushErr := make(chan error, 1)
+	go func() { flushErr <- w.Flush(context.Background()) }()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Flush did not start a send")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := w.Close(ctx); err == nil {
+		t.Fatal("Close should time out while Flush holds the drain gate")
+	}
+
+	close(unblock)
+	if err := <-flushErr; err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+}

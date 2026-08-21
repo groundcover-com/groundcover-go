@@ -130,14 +130,13 @@ func (s *runtimeSource) readOpenFDs() (float64, bool) {
 // cpu.cfs_quota_us/cpu.cfs_period_us quota when set, else GOMAXPROCS (which
 // is itself cgroup-aware on modern Go).
 func (s *runtimeSource) cpuCoresAvailable() float64 {
-	available := float64(runtime.GOMAXPROCS(0))
 	if cores, ok := s.cgroupV2CPU(); ok {
-		return min(cores, available)
+		return cores
 	}
 	if cores, ok := s.cgroupV1CPU(); ok {
-		return min(cores, available)
+		return cores
 	}
-	return available
+	return float64(runtime.GOMAXPROCS(0))
 }
 
 // cgroupV2CPU parses cpu.max along the process's cgroup ancestry and returns

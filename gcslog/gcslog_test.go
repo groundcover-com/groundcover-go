@@ -13,6 +13,7 @@ import (
 
 	groundcover "github.com/groundcover-com/groundcover-go"
 	"github.com/groundcover-com/groundcover-go/gcslog"
+	gclogs "github.com/groundcover-com/groundcover-go/logs"
 )
 
 // capture is an httptest handler that stores ingestion bodies.
@@ -154,4 +155,22 @@ func TestHandlerGlobalClientBeforeInitIsNoOp(t *testing.T) {
 	// a no-op before Init: logging must be safe and silent.
 	logger := slog.New(gcslog.NewHandler(gcslog.Options{}))
 	logger.Info("goes nowhere")
+}
+
+type panicLeveler struct{}
+
+func (panicLeveler) Level() slog.Level { panic("level") }
+
+type panicEmitter struct{}
+
+func (panicEmitter) EmitLog(context.Context, gclogs.Level, string, ...gclogs.Attributes) {
+	panic("emit")
+}
+
+func TestHandlerRecoversPanickingLevelerAndEmitter(t *testing.T) {
+	logger := slog.New(gcslog.NewHandler(gcslog.Options{
+		Level:  panicLeveler{},
+		Client: panicEmitter{},
+	}))
+	logger.Info("must not panic")
 }

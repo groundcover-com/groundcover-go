@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/groundcover-com/groundcover-go/internal/safeguard"
 	gclogs "github.com/groundcover-com/groundcover-go/logs"
 )
 
@@ -27,24 +28,26 @@ func (c *Client) EmitLog(ctx context.Context, level Level, msg string, attrs ...
 	if c.disabled || c.logClient == nil {
 		return
 	}
-	if !level.valid() {
-		level = LevelInfo
-	}
-	record := &Log{
-		ID:        newUUID(),
-		Timestamp: time.Now(),
-		Level:     level,
-		Message:   msg,
-		Service:   Service{Name: c.res.serviceName, Version: c.res.release},
-	}
-	for _, attributes := range attrs {
-		if record.Attributes == nil {
-			record.Attributes = make(Attributes, len(attributes))
+	safeguard.Do(func() {
+		if !level.valid() {
+			level = LevelInfo
 		}
-		record.Attributes.merge(attributes)
-	}
-	scopeFromContext(ctx).applyToLog(record)
-	c.logClient.EmitRecord(ctx, toStandaloneRecord(record))
+		record := &Log{
+			ID:        newUUID(),
+			Timestamp: time.Now(),
+			Level:     level,
+			Message:   msg,
+			Service:   Service{Name: c.res.serviceName, Version: c.res.release},
+		}
+		for _, attributes := range attrs {
+			if record.Attributes == nil {
+				record.Attributes = make(Attributes, len(attributes))
+			}
+			record.Attributes.merge(attributes)
+		}
+		scopeFromContext(ctx).applyToLog(record)
+		c.logClient.EmitRecord(ctx, toStandaloneRecord(record))
+	}, c.onPanic)
 }
 
 // LogDebug emits a debug-level log record.

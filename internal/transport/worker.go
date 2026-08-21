@@ -187,7 +187,8 @@ func (w *Worker[T]) loop() {
 	for {
 		select {
 		case <-w.stop:
-			w.drain(w.baseCtx)
+			// Close performs the caller-driven drain. Returning immediately
+			// avoids contending for dispatchGate with an in-flight Flush.
 			return
 		case <-ticker.C:
 			w.dispatchReady(w.baseCtx)
@@ -217,11 +218,6 @@ func (w *Worker[T]) dispatchReadyLocked(ctx context.Context) {
 		}
 		w.dispatch(ctx, batch)
 	}
-}
-
-// drain dispatches everything remaining (used during shutdown).
-func (w *Worker[T]) drain(ctx context.Context) {
-	w.dispatchReady(ctx)
 }
 
 // dispatch sends a batch, bounded by the concurrency semaphore. If the semaphore
