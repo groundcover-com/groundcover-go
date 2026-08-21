@@ -5,8 +5,13 @@ import (
 	"fmt"
 )
 
-// ErrMissingDSN is returned by New when an enabled client has no DSN.
-var ErrMissingDSN = errors.New("metrics: DSN is required unless Disabled is true")
+// ErrMissingDSN is returned by New when an enabled client has neither a DSN
+// nor an Endpoint override.
+var ErrMissingDSN = errors.New("metrics: DSN or Endpoint is required unless Disabled is true")
+
+// ErrDSNAndEndpoint is returned by New when both DSN and the Endpoint
+// override are set; set DSN or Endpoint, not both.
+var ErrDSNAndEndpoint = errors.New("metrics: set DSN or Endpoint, not both")
 
 // ErrAlreadyStarted is returned by Start when the background worker is
 // already running.

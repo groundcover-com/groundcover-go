@@ -23,7 +23,12 @@ const (
 type Config struct {
 	// DSN is the base groundcover ingestion origin. The SDK owns the path
 	// (<DSN>/api/v1/import/prometheus). A missing scheme defaults to https.
+	// Set either DSN (normal) or Endpoint (advanced), not both.
 	DSN string
+	// Endpoint is an advanced override: the full push URL, for on-prem or
+	// custom gateways where the standard DSN-derived path does not apply.
+	// When set it is used verbatim. Mutually exclusive with DSN.
+	Endpoint string
 	// IngestionKey is the write key sent as the apikey header on every push.
 	IngestionKey string
 
@@ -124,7 +129,12 @@ func (c Config) withDefaults() Config {
 
 // validate checks a defaulted Config. It never mutates c.
 func (c Config) validate() error {
-	if !c.Disabled && strings.TrimSpace(c.DSN) == "" {
+	dsn := strings.TrimSpace(c.DSN)
+	override := strings.TrimSpace(c.Endpoint)
+	if dsn != "" && override != "" {
+		return ErrDSNAndEndpoint
+	}
+	if !c.Disabled && dsn == "" && override == "" {
 		return ErrMissingDSN
 	}
 	for key := range c.Headers {
@@ -152,8 +162,12 @@ func (c Config) validate() error {
 	return nil
 }
 
-// pushEndpoint returns the import URL derived from the DSN.
+// pushEndpoint returns the URL pushes are POSTed to: the Endpoint override
+// verbatim when set, otherwise the import path derived from the DSN.
 func (c Config) pushEndpoint() string {
+	if override := strings.TrimSpace(c.Endpoint); override != "" {
+		return override
+	}
 	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
 	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
 		dsn = "https://" + dsn

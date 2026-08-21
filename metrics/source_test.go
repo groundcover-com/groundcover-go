@@ -3,7 +3,10 @@ package metrics
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -175,6 +178,44 @@ func TestDuplicateSeriesStrictMode(t *testing.T) {
 	}
 	if stats.DuplicateSeries != 1 {
 		t.Errorf("DuplicateSeries = %d, want 1", stats.DuplicateSeries)
+	}
+}
+
+func TestEndpointOverride(t *testing.T) {
+	var gotPath atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath.Store(r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := New(Config{
+		Endpoint:              srv.URL + "/custom/gateway/path",
+		IngestionKey:          "k",
+		Job:                   "j",
+		Instance:              "i",
+		DisableRuntimeMetrics: true,
+	}, textSource("m 1\n"))
+	if err != nil {
+		t.Fatalf("New with Endpoint only: %v", err)
+	}
+	if err := client.Push(context.Background()); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if got, _ := gotPath.Load().(string); got != "/custom/gateway/path" {
+		t.Errorf("path = %q, want the Endpoint override path", got)
+	}
+}
+
+func TestDSNAndEndpointMutuallyExclusive(t *testing.T) {
+	_, err := New(Config{DSN: "https://a.example.com", Endpoint: "https://b.example.com/push"})
+	if !errors.Is(err, ErrDSNAndEndpoint) {
+		t.Errorf("New = %v, want ErrDSNAndEndpoint", err)
+	}
+	// Disabled clients still reject the ambiguous config.
+	_, err = New(Config{Disabled: true, DSN: "a", Endpoint: "b"})
+	if !errors.Is(err, ErrDSNAndEndpoint) {
+		t.Errorf("New(Disabled) = %v, want ErrDSNAndEndpoint", err)
 	}
 }
 

@@ -250,6 +250,7 @@ func TestNewValidation(t *testing.T) {
 		{"extra label instance", Config{DSN: "x", ExtraLabels: map[string]string{"Instance": "v"}}},
 		{"extra label invalid name", Config{DSN: "x", ExtraLabels: map[string]string{"bad-name": "v"}}},
 		{"extra label value too long", Config{DSN: "x", MaxLabelValueBytes: 4, ExtraLabels: map[string]string{"ok": "toolong"}}},
+		{"both DSN and Endpoint", Config{DSN: "x", Endpoint: "https://y.example.com/push"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
