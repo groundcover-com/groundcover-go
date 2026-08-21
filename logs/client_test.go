@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/groundcover-com/groundcover-go/logs"
@@ -105,5 +107,50 @@ func TestStandaloneBeforeSendAndDisabled(t *testing.T) {
 	client.Error(context.Background(), "dropped")
 	if stats := client.Stats(); stats.DroppedBeforeSend != 1 {
 		t.Fatalf("stats = %+v", stats)
+	}
+}
+
+func TestStandaloneSanitizesNonFiniteAndRejectsOversizedRecords(t *testing.T) {
+	var bodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		bodies = append(bodies, body)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := logs.New(logs.Config{
+		DSN:           server.URL,
+		HTTPClient:    server.Client(),
+		MaxBytes:      1024,
+		MaxBatchBytes: 1024,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	client.Info(context.Background(), "finite batch", logs.Attributes{"value": math.NaN()})
+	client.Info(context.Background(), strings.Repeat(`"`, 2000))
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if len(bodies) != 1 {
+		t.Fatalf("requests = %d, want 1", len(bodies))
+	}
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(bodies[0]), &record); err != nil {
+		t.Fatalf("decode record: %v", err)
+	}
+	if record["value"] != "NaN" {
+		t.Fatalf("value = %#v, want NaN string", record["value"])
+	}
+	stats := client.Stats()
+	if stats.Captured != 1 || stats.Sent != 1 || stats.DroppedOverflow != 1 {
+		t.Fatalf("stats = %+v", stats)
+	}
+
+	client.Info(context.Background(), "after close")
+	if stats := client.Stats(); stats.Captured != 1 || stats.QueuePendingItems != 0 {
+		t.Fatalf("post-close stats = %+v", stats)
 	}
 }

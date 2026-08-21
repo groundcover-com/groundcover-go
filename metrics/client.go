@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -82,8 +83,9 @@ type Client struct {
 	disabled   bool
 	onPanic    safeguard.Handler
 
-	// pushMu serializes render+push across the worker and manual Push calls.
-	pushMu sync.Mutex
+	// pushGate serializes render+push across the worker and manual Push calls.
+	// A channel is used so waiting respects the caller's context.
+	pushGate chan struct{}
 
 	// lifecycleMu guards the background worker state.
 	lifecycleMu sync.Mutex
@@ -101,14 +103,16 @@ func New(cfg Config, sources ...MetricSource) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	cfg.Headers = cfg.Headers.Clone()
+	cfg.ExtraLabels = cloneLabels(cfg.ExtraLabels)
 	client := &Client{
 		cfg:      cfg,
 		endpoint: cfg.pushEndpoint(),
 		fixed:    cfg.fixedLabels(),
+		pushGate: make(chan struct{}, 1),
 	}
-	client.onPanic = func(safeguard.PanicInfo) {
-		client.stats.sourcePanics.Add(1)
-	}
+	client.pushGate <- struct{}{}
+	client.onPanic = func(safeguard.PanicInfo) {}
 	if cfg.Disabled {
 		client.disabled = true
 		return client, nil
@@ -129,7 +133,11 @@ func New(cfg Config, sources ...MetricSource) (*Client, error) {
 		// The zero transport is the default Go transport: proxy environment
 		// variables (HTTP_PROXY / HTTPS_PROXY / NO_PROXY) are honored.
 		client.httpClient = &http.Client{Timeout: cfg.Timeout}
+	} else {
+		cloned := *client.httpClient
+		client.httpClient = &cloned
 	}
+	client.httpClient.CheckRedirect = safeRedirectPolicy(client.httpClient.CheckRedirect)
 	return client, nil
 }
 
@@ -159,7 +167,10 @@ func (c *Client) Push(ctx context.Context) error {
 	}
 	var err error
 	if ok := safeguard.Do(func() { err = c.push(ctx) }, c.onPanic); !ok {
-		return errors.New("metrics: internal panic during push")
+		err = errors.New("metrics: internal panic during push")
+		c.stats.pushFailures.Add(1)
+		c.stats.setLastError(err.Error())
+		return err
 	}
 	return err
 }
@@ -237,17 +248,27 @@ func (c *Client) runLoop(ctx context.Context) {
 // panic-guarded OnError callback.
 func (c *Client) pushAndReport(ctx context.Context) {
 	var err error
-	safeguard.Do(func() { err = c.push(ctx) }, c.onPanic)
+	if ok := safeguard.Do(func() { err = c.push(ctx) }, c.onPanic); !ok {
+		err = errors.New("metrics: internal panic during push")
+		c.stats.pushFailures.Add(1)
+		c.stats.setLastError(err.Error())
+	}
 	if err != nil && c.cfg.OnError != nil {
-		safeguard.Do(func() { c.cfg.OnError(err) }, c.onPanic)
+		safeguard.Do(func() { c.cfg.OnError(err) }, func(safeguard.PanicInfo) {
+			c.stats.sourcePanics.Add(1)
+		})
 	}
 }
 
 // push renders all sources and delivers the body. It holds pushMu for the
 // full render+send so pushes never overlap.
 func (c *Client) push(ctx context.Context) error {
-	c.pushMu.Lock()
-	defer c.pushMu.Unlock()
+	select {
+	case <-c.pushGate:
+		defer func() { c.pushGate <- struct{}{} }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	c.stats.pushes.Add(1)
 	c.stats.lastAttemptUnixNano.Store(time.Now().UnixNano())
@@ -300,15 +321,26 @@ type renderOutcome struct {
 // the remaining sources are still rendered. Only a limit violation (or a
 // duplicate series in strict mode) is fatal.
 func (c *Client) render() (renderOutcome, error) {
-	r := renderer{cfg: c.cfg, fixed: c.fixed, seen: make(map[string]string)}
+	r := renderer{
+		cfg:      c.cfg,
+		fixed:    c.fixed,
+		seen:     make(map[string]string),
+		metadata: make(map[string]metadataEntry),
+	}
 	var outcome renderOutcome
 	for _, entry := range c.sources {
-		var buf bytes.Buffer
+		buf := newCappedBuffer(c.cfg.MaxBodyBytes)
 		source := entry.source
-		if ok := safeguard.Do(func() { source.WritePrometheus(&buf) }, c.onPanic); !ok {
+		if ok := safeguard.Do(func() { source.WritePrometheus(buf) }, func(safeguard.PanicInfo) {
+			c.stats.sourcePanics.Add(1)
+		}); !ok {
 			outcome.srcErrs = append(outcome.srcErrs, fmt.Errorf("metric source %q: panic while rendering", entry.name))
 			outcome.failedSources++
 			continue
+		}
+		if buf.overflow {
+			outcome.malformed, outcome.duplicates, outcome.overrides = r.malformed, r.duplicates, r.overrides
+			return outcome, &LimitError{Limit: limitMaxBodyBytes, Max: c.cfg.MaxBodyBytes, Actual: buf.actual}
 		}
 		srcErrs, fatal := r.addSource(entry.name, buf.Bytes())
 		if len(srcErrs) > 0 {
@@ -365,7 +397,70 @@ func (c *Client) send(ctx context.Context, body []byte) error {
 		return nil
 	}
 	excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-	return &StatusError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(excerpt))}
+	bodyExcerpt := strings.TrimSpace(string(excerpt))
+	if c.cfg.IngestionKey != "" {
+		bodyExcerpt = strings.ReplaceAll(bodyExcerpt, c.cfg.IngestionKey, "[REDACTED]")
+	}
+	return &StatusError{StatusCode: resp.StatusCode, Body: bodyExcerpt}
+}
+
+type cappedBuffer struct {
+	buf      bytes.Buffer
+	max      int
+	actual   int
+	overflow bool
+}
+
+func newCappedBuffer(max int) *cappedBuffer {
+	return &cappedBuffer{max: max}
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.actual += len(p)
+	remaining := b.max - b.buf.Len()
+	if remaining > 0 {
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		_, _ = b.buf.Write(p[:remaining])
+	}
+	if b.actual > b.max {
+		b.overflow = true
+	}
+	return len(p), nil
+}
+
+func (b *cappedBuffer) Bytes() []byte { return b.buf.Bytes() }
+
+func cloneLabels(labels map[string]string) map[string]string {
+	if labels == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(labels))
+	for key, value := range labels {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func safeRedirectPolicy(previous func(*http.Request, []*http.Request) error) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && !sameOrigin(via[0].URL, req.URL) {
+			return errors.New("metrics: refusing cross-origin redirect")
+		}
+		if previous != nil {
+			return previous(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("metrics: stopped after 10 redirects")
+		}
+		return nil
+	}
+}
+
+func sameOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Host, right.Host)
 }
 
 // gzipBytes returns the gzip-compressed form of b.

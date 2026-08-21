@@ -98,6 +98,16 @@ func TestPopBatchAlwaysReturnsOne(t *testing.T) {
 	}
 }
 
+func TestPushRejectsItemLargerThanByteBudget(t *testing.T) {
+	b := ringbuf.New[int](10, 100, func(value int) int { return value })
+	if dropped := b.Push(101); dropped != 1 {
+		t.Fatalf("dropped = %d, want 1", dropped)
+	}
+	if b.Len() != 0 || b.Bytes() != 0 {
+		t.Fatalf("oversized item retained: len=%d bytes=%d", b.Len(), b.Bytes())
+	}
+}
+
 func TestConcurrentPush(t *testing.T) {
 	b := ringbuf.New[int](100000, 0, nil)
 	var wg sync.WaitGroup

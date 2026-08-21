@@ -1,8 +1,8 @@
 // Command logs-roundtrip is the live end-to-end verifier for the log signal.
 // It initializes the SDK with EnableLogs, emits records carrying a unique
 // needle through both layers — the direct emission API and the gcslog slog
-// bridge — then queries the logs API (where the RUM pipeline routes log
-// events) until the records are found, and prints what it fetched back. It
+// bridge — then queries the logs API until the directly ingested records are
+// found, and prints what it fetched back. It
 // exits 0 on success and 1 on failure.
 //
 // It uses the same GC_* environment as examples/roundtrip.

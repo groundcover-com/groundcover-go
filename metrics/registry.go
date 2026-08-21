@@ -169,6 +169,10 @@ func (r *Registry) getOrCreate(name string, labels map[string]string, typ metric
 	defer r.mu.Unlock()
 	fam, ok := r.families[name]
 	if !ok {
+		if err := histogramNameConflict(r.families, name, typ); err != nil {
+			r.recordErrLocked(err)
+			return nil
+		}
 		fam = &family{typ: typ, series: make(map[string]*seriesEntry)}
 		r.families[name] = fam
 	}
@@ -190,6 +194,33 @@ func (r *Registry) getOrCreate(name string, labels map[string]string, typ metric
 		fam.series[sig] = entry
 	}
 	return entry
+}
+
+func histogramNameConflict(families map[string]*family, name string, typ metricType) error {
+	const (
+		bucketSuffix = "_bucket"
+		sumSuffix    = "_sum"
+		countSuffix  = "_count"
+	)
+	suffixes := [...]string{bucketSuffix, sumSuffix, countSuffix}
+	if typ == typeHistogram {
+		for _, suffix := range suffixes {
+			if _, exists := families[name+suffix]; exists {
+				return fmt.Errorf("metrics: histogram %q conflicts with registered metric %q", name, name+suffix)
+			}
+		}
+	}
+	for existing, fam := range families {
+		if fam.typ != typeHistogram {
+			continue
+		}
+		for _, suffix := range suffixes {
+			if name == existing+suffix {
+				return fmt.Errorf("metrics: metric %q conflicts with histogram %q", name, existing)
+			}
+		}
+	}
+	return nil
 }
 
 // recordErr records a registration error under the lock.

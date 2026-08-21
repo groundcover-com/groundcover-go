@@ -199,7 +199,8 @@ reg.Histogram("request_seconds", nil, nil).Observe(0.042)
   typed error and the worker keeps running. Failures surface via `OnError`
   and the credential-free `Stats()` (push/partial/failure counters, malformed
   lines, duplicates, label overrides, last attempt/success/error, worker
-  state); the client never panics and never blocks the host.
+  state). `Push` is synchronous; `Start` runs periodic pushes in the
+  background. Custom `MetricSource` implementations must return promptly.
 - Advanced: `Config.Endpoint` overrides the full push URL for on-prem or
   custom gateways (mutually exclusive with `DSN`). The default HTTP transport
   is untouched, so proxy environment variables are honored.

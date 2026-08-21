@@ -105,6 +105,7 @@ func TestParseSampleLineMalformed(t *testing.T) {
 		`m{a="b"} 1 not-a-timestamp`,
 		`m{a="b"} 1 2 3`,
 		`m{bad-label="b"} 1`,
+		`m{a="1",a="2"} 1`,
 		`m{a="bad \q escape"} 1`,
 		`m{a="dangling\`,
 	}
@@ -112,6 +113,26 @@ func TestParseSampleLineMalformed(t *testing.T) {
 		if _, err := parseSampleLine(line); err == nil {
 			t.Errorf("parseSampleLine(%q) succeeded, want error", line)
 		}
+	}
+}
+
+func TestMetadataIsDeduplicatedAcrossSources(t *testing.T) {
+	cs := newCaptureServer(t)
+	first := textSource("# HELP shared_metric help\n# TYPE shared_metric gauge\nshared_metric{id=\"a\"} 1\n")
+	second := textSource("# HELP shared_metric help\n# TYPE shared_metric gauge\nshared_metric{id=\"b\"} 2\n")
+	client, err := New(testConfig(cs), first, second)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := client.Push(context.Background()); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	body := cs.last().body
+	if got := strings.Count(body, "# HELP shared_metric"); got != 1 {
+		t.Fatalf("HELP declarations = %d, body:\n%s", got, body)
+	}
+	if got := strings.Count(body, "# TYPE shared_metric"); got != 1 {
+		t.Fatalf("TYPE declarations = %d, body:\n%s", got, body)
 	}
 }
 

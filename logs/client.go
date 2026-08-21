@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/groundcover-com/groundcover-go/internal/ringbuf"
@@ -23,6 +24,9 @@ type Client struct {
 	onPanic  safeguard.Handler
 	ring     *ringbuf.Buffer[*Record]
 	worker   *transport.Worker[*Record]
+
+	lifecycleMu sync.RWMutex
+	closing     bool
 }
 
 // New constructs a standalone logs Client.
@@ -41,7 +45,9 @@ func New(cfg Config) (*Client, error) {
 	client.onPanic = func(safeguard.PanicInfo) {
 		client.metrics.IncPanicsRecovered()
 	}
-	client.ring = ringbuf.New[*Record](cfg.MaxQueue, cfg.MaxBytes, estimateSize)
+	client.ring = ringbuf.New[*Record](cfg.MaxQueue, cfg.MaxBytes, func(record *Record) int {
+		return encodedSize(record, client.res)
+	})
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
@@ -112,6 +118,17 @@ func (c *Client) EmitRecord(_ context.Context, record Record) {
 			current.User.Email = c.cfg.Hasher.HashIdentity(current.User.Email)
 		}
 		current.Attributes = sanitize(current.Attributes)
+		recordBytes := encodedSize(current, c.res)
+		if recordBytes > c.cfg.MaxBytes || recordBytes > c.cfg.MaxBatchBytes {
+			c.metrics.AddDropped(selfmetrics.DropOverflow, 1)
+			return
+		}
+
+		c.lifecycleMu.RLock()
+		defer c.lifecycleMu.RUnlock()
+		if c.closing {
+			return
+		}
 		c.metrics.IncCaptured()
 		dropped := c.ring.Push(current)
 		if dropped > 0 {
@@ -177,6 +194,9 @@ func (c *Client) Close(ctx context.Context) error {
 	if c == nil || c.disabled {
 		return nil
 	}
+	c.lifecycleMu.Lock()
+	c.closing = true
+	c.lifecycleMu.Unlock()
 	return c.worker.Close(ctx)
 }
 

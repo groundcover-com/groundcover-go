@@ -250,6 +250,9 @@ func TestNewValidation(t *testing.T) {
 		{"extra label instance", Config{DSN: "x", ExtraLabels: map[string]string{"Instance": "v"}}},
 		{"extra label invalid name", Config{DSN: "x", ExtraLabels: map[string]string{"bad-name": "v"}}},
 		{"extra label value too long", Config{DSN: "x", MaxLabelValueBytes: 4, ExtraLabels: map[string]string{"ok": "toolong"}}},
+		{"job too long", Config{DSN: "x", Job: "toolong", MaxLabelValueBytes: 4}},
+		{"instance too long", Config{DSN: "x", Instance: "toolong", MaxLabelValueBytes: 4}},
+		{"too many fixed labels", Config{DSN: "x", Job: "j", Instance: "i", MaxLabelsPerSeries: 1}},
 		{"both DSN and Endpoint", Config{DSN: "x", Endpoint: "https://y.example.com/push"}},
 	}
 	for _, tt := range tests {
@@ -657,5 +660,91 @@ func TestOnErrorReceivesFailuresAndWorkerSurvives(t *testing.T) {
 	var statusErr *StatusError
 	if !errors.As(received[0], &statusErr) || statusErr.StatusCode != http.StatusInternalServerError {
 		t.Errorf("OnError error = %v, want *StatusError{500}", received[0])
+	}
+}
+
+func TestSourceRenderingIsBounded(t *testing.T) {
+	cs := newCaptureServer(t)
+	cfg := testConfig(cs)
+	cfg.MaxBodyBytes = 128
+	client, err := New(cfg, textSource(strings.Repeat("oversized_metric 1\n", 20)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	pushErr := client.Push(context.Background())
+	var limitErr *LimitError
+	if !errors.As(pushErr, &limitErr) || limitErr.Limit != limitMaxBodyBytes {
+		t.Fatalf("Push error = %v, want MaxBodyBytes LimitError", pushErr)
+	}
+	if cs.count() != 0 {
+		t.Fatalf("requests = %d, want 0", cs.count())
+	}
+}
+
+func TestConfigHeadersAreCloned(t *testing.T) {
+	cs := newCaptureServer(t)
+	cfg := testConfig(cs)
+	cfg.Headers = http.Header{"X-Custom": []string{"original"}}
+	client, err := New(cfg, textSource("clone_test 1\n"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg.Headers.Set("X-Custom", "mutated")
+	if err := client.Push(context.Background()); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if got := cs.last().custom; got != "original" {
+		t.Fatalf("X-Custom = %q, want original", got)
+	}
+}
+
+func TestCrossOriginRedirectDoesNotForwardKey(t *testing.T) {
+	var receivedKey atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		receivedKey.Store(req.Header.Get("apikey") != "")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		http.Redirect(writer, req, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	client, err := New(Config{
+		Endpoint:              origin.URL,
+		IngestionKey:          "redirect-secret",
+		DisableRuntimeMetrics: true,
+	}, textSource("redirect_test 1\n"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := client.Push(context.Background()); err == nil {
+		t.Fatal("Push unexpectedly followed cross-origin redirect")
+	}
+	if receivedKey.Load() {
+		t.Fatal("redirect target received ingestion key")
+	}
+}
+
+func TestStatusErrorRedactsEchoedKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+		_, _ = writer.Write([]byte("rejected secret-key"))
+	}))
+	defer server.Close()
+	client, err := New(Config{
+		Endpoint:              server.URL,
+		IngestionKey:          "secret-key",
+		DisableRuntimeMetrics: true,
+	}, textSource("redaction_test 1\n"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	pushErr := client.Push(context.Background())
+	if pushErr == nil || strings.Contains(pushErr.Error(), "secret-key") {
+		t.Fatalf("Push error was not redacted: %v", pushErr)
+	}
+	if strings.Contains(client.Stats().LastError, "secret-key") {
+		t.Fatalf("LastError was not redacted: %q", client.Stats().LastError)
 	}
 }

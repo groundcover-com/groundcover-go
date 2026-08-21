@@ -2,6 +2,7 @@ package groundcover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -385,13 +386,13 @@ func (c *Client) Flush(ctx context.Context) error {
 	if c.disabled {
 		return nil
 	}
-	err := c.worker.Flush(ctx)
-	if c.logClient != nil {
-		if logErr := c.logClient.Flush(ctx); err == nil {
-			err = logErr
-		}
+	if c.logClient == nil {
+		return c.worker.Flush(ctx)
 	}
-	return err
+	results := make(chan error, 2)
+	go func() { results <- c.worker.Flush(ctx) }()
+	go func() { results <- c.logClient.Flush(ctx) }()
+	return errors.Join(<-results, <-results)
 }
 
 // Close flushes and stops the client. It is idempotent and bounded by ctx.
@@ -399,13 +400,13 @@ func (c *Client) Close(ctx context.Context) error {
 	if c.disabled {
 		return nil
 	}
-	err := c.worker.Close(ctx)
-	if c.logClient != nil {
-		if logErr := c.logClient.Close(ctx); err == nil {
-			err = logErr
-		}
+	if c.logClient == nil {
+		return c.worker.Close(ctx)
 	}
-	return err
+	results := make(chan error, 2)
+	go func() { results <- c.worker.Close(ctx) }()
+	go func() { results <- c.logClient.Close(ctx) }()
+	return errors.Join(<-results, <-results)
 }
 
 // FlushTimeout is convenience sugar for Flush with a fresh context bounded by d.

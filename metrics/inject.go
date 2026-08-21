@@ -25,8 +25,9 @@ type renderer struct {
 	out   bytes.Buffer
 	// seen maps the final series identity (name plus injected labels) to the
 	// name of the source that produced it first.
-	seen   map[string]string
-	series int
+	seen     map[string]string
+	metadata map[string]metadataEntry
+	series   int
 
 	// Per-push counters, transferred into the client stats after rendering.
 	malformed  uint64
@@ -59,6 +60,22 @@ func (r *renderer) addSource(sourceName string, text []byte) (srcErrs []error, f
 			continue
 		}
 		if line[0] == '#' {
+			if key, value, ok := parseMetadataLine(string(line)); ok {
+				if first, exists := r.metadata[key]; exists {
+					if first.value != value {
+						r.malformed++
+						if !malformedReported {
+							malformedReported = true
+							srcErrs = append(srcErrs, fmt.Errorf(
+								"metric source %q: conflicting metadata at line %d (first declared by %q)",
+								sourceName, lineNo, first.source,
+							))
+						}
+					}
+					continue
+				}
+				r.metadata[key] = metadataEntry{value: value, source: sourceName}
+			}
 			r.out.Write(line)
 			r.out.WriteByte('\n')
 			if r.out.Len() > r.cfg.MaxBodyBytes {
@@ -210,6 +227,7 @@ func parseSampleLine(line string) (sample, error) {
 // closing brace.
 func parseLabels(line string, i int) ([]label, int, error) {
 	var labels []label
+	seen := make(map[string]struct{})
 	for {
 		for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
 			i++
@@ -225,6 +243,10 @@ func parseLabels(line string, i int) ([]label, int, error) {
 		if !isValidLabelName(name) {
 			return nil, 0, fmt.Errorf("metrics: invalid label name in %q", line)
 		}
+		if _, exists := seen[name]; exists {
+			return nil, 0, fmt.Errorf("metrics: duplicate label name %q in %q", name, line)
+		}
+		seen[name] = struct{}{}
 		if i >= len(line) || line[i] != '=' {
 			return nil, 0, fmt.Errorf("metrics: expected '=' in %q", line)
 		}
@@ -254,6 +276,21 @@ func parseLabels(line string, i int) ([]label, int, error) {
 			return nil, 0, fmt.Errorf("metrics: expected ',' or '}' in %q", line)
 		}
 	}
+}
+
+type metadataEntry struct {
+	value  string
+	source string
+}
+
+// parseMetadataLine identifies HELP and TYPE declarations. Other comments are
+// passed through untouched.
+func parseMetadataLine(line string) (key, value string, ok bool) {
+	fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "#")))
+	if len(fields) < 3 || (fields[0] != "HELP" && fields[0] != "TYPE") || !isValidMetricName(fields[1]) {
+		return "", "", false
+	}
+	return fields[0] + "\x00" + fields[1], strings.Join(fields[2:], " "), true
 }
 
 // parseQuotedValue decodes a label value starting just after the opening

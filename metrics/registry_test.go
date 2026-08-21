@@ -229,3 +229,22 @@ func TestRegistryConcurrency(t *testing.T) {
 		t.Errorf("histogram lost observations:\n%s", got)
 	}
 }
+
+func TestRegistryRejectsHistogramDerivedNameConflicts(t *testing.T) {
+	t.Run("histogram first", func(t *testing.T) {
+		r := NewRegistry()
+		r.Histogram("request_duration", nil, nil)
+		r.Gauge("request_duration_sum", nil)
+		if r.Err() == nil {
+			t.Fatal("Err = nil, want derived-name conflict")
+		}
+	})
+	t.Run("derived name first", func(t *testing.T) {
+		r := NewRegistry()
+		r.Counter("request_duration_count", nil)
+		r.Histogram("request_duration", nil, nil)
+		if r.Err() == nil {
+			t.Fatal("Err = nil, want derived-name conflict")
+		}
+	})
+}

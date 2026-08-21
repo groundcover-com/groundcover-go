@@ -3,6 +3,8 @@ package logs
 import (
 	"bytes"
 	"encoding/json"
+	"math"
+	"sort"
 )
 
 const timestampFormat = "2006-01-02T15:04:05.999999999Z07:00"
@@ -62,7 +64,13 @@ func reserved(key string) bool {
 }
 
 func flatten(out map[string]any, prefix string, attributes map[string]any) {
-	for key, value := range attributes {
+	keys := make([]string, 0, len(attributes))
+	for key := range attributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := attributes[key]
 		fullKey := key
 		if prefix != "" {
 			fullKey = prefix + "." + key
@@ -81,35 +89,13 @@ func set(out map[string]any, key, value string) {
 	}
 }
 
-func estimateSize(record *Record) int {
-	const base = 192
-	size := base + len(record.Message)
-	for key, value := range record.Attributes {
-		size += len(key) + estimateValue(value)
+// encodedSize returns the exact NDJSON byte cost of one sanitized record.
+// Marshal failures are treated as oversized so the record is rejected before
+// it can poison a batch.
+func encodedSize(record *Record, res resource) int {
+	line, err := json.Marshal(buildWireRecord(record, res))
+	if err != nil {
+		return math.MaxInt
 	}
-	return size + len(record.User.ID) + len(record.User.Email) +
-		len(record.User.Name) + len(record.User.Organization)
-}
-
-func estimateValue(value any) int {
-	switch typed := value.(type) {
-	case string:
-		return len(typed)
-	case map[string]any:
-		total := 2
-		for key, item := range typed {
-			total += len(key) + estimateValue(item)
-		}
-		return total
-	case Attributes:
-		return estimateValue(map[string]any(typed))
-	case []any:
-		total := 2
-		for _, item := range typed {
-			total += estimateValue(item)
-		}
-		return total
-	default:
-		return 16
-	}
+	return len(line) + 1
 }

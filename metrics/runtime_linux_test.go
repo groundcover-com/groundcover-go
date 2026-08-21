@@ -156,6 +156,26 @@ func TestMemoryLimitNothingAvailableIsOmitted(t *testing.T) {
 	}
 }
 
+func TestNestedCgroupV2MembershipAndAncestorLimits(t *testing.T) {
+	fixture := fstest.MapFS{
+		"proc/self/cgroup": {Data: []byte("0::/kubepods/pod/container\n")},
+		"proc/self/mountinfo": {Data: []byte(
+			"29 23 0:26 /kubepods/pod /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw\n",
+		)},
+		"sys/fs/cgroup/container/cpu.max":    {Data: []byte("200000 100000\n")},
+		"sys/fs/cgroup/cpu.max":              {Data: []byte("25000 100000\n")},
+		"sys/fs/cgroup/container/memory.max": {Data: []byte("1073741824\n")},
+		"sys/fs/cgroup/memory.max":           {Data: []byte("536870912\n")},
+	}
+	src := &runtimeSource{fsys: fixture}
+	if got := src.cpuCoresAvailable(); got != 0.25 {
+		t.Fatalf("cpuCoresAvailable = %v, want tightest ancestor quota 0.25", got)
+	}
+	if got, ok := src.memoryLimitBytes(); !ok || got != 536870912 {
+		t.Fatalf("memoryLimitBytes = %v, %v; want tightest ancestor 536870912", got, ok)
+	}
+}
+
 func TestMalformedProcFilesAreOmitted(t *testing.T) {
 	src := &runtimeSource{fsys: fstest.MapFS{
 		"proc/self/stat":  {Data: []byte("garbage without parens\n")},

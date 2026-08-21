@@ -48,12 +48,16 @@ func New[T any](maxItems, maxBytes int, sizeOf Sizer[T]) *Buffer[T] {
 }
 
 // Push appends item, evicting the oldest entries until the buffer is within both
-// bounds. It always accepts item (the caller never blocks) and returns the
-// number of entries evicted to make room.
+// bounds. An item larger than the byte budget is rejected. The caller never
+// blocks; the return value is the number of existing or incoming entries
+// dropped.
 func (b *Buffer[T]) Push(item T) (dropped int) {
 	size := b.sizeOf(item)
 	if size < 1 {
 		size = 1
+	}
+	if size > b.maxBytes {
+		return 1
 	}
 
 	b.mu.Lock()

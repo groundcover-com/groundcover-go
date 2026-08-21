@@ -159,6 +159,24 @@ func (c Config) validate() error {
 			return fmt.Errorf("metrics: ExtraLabels value for %q exceeds MaxLabelValueBytes (%d)", name, c.MaxLabelValueBytes)
 		}
 	}
+	for name, value := range map[string]string{
+		labelJob:      c.Job,
+		labelInstance: c.Instance,
+	} {
+		if len(value) > c.MaxLabelValueBytes {
+			return fmt.Errorf("metrics: %s value exceeds MaxLabelValueBytes (%d)", name, c.MaxLabelValueBytes)
+		}
+	}
+	fixedLabelCount := len(c.ExtraLabels)
+	if c.Job != "" {
+		fixedLabelCount++
+	}
+	if c.Instance != "" {
+		fixedLabelCount++
+	}
+	if fixedLabelCount > c.MaxLabelsPerSeries {
+		return fmt.Errorf("metrics: %d fixed labels exceed MaxLabelsPerSeries (%d)", fixedLabelCount, c.MaxLabelsPerSeries)
+	}
 	return nil
 }
 

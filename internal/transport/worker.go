@@ -102,11 +102,17 @@ type Worker[T any] struct {
 
 	sem      chan struct{}
 	inflight sync.WaitGroup
+	// dispatchGate serializes removing batches from the ring with registering
+	// their sends in inflight. Flush holds it while waiting, which makes the
+	// drain-and-wait operation an atomic barrier.
+	dispatchGate chan struct{}
 
 	rng *jitterRNG
 
 	startOnce sync.Once
 	closeOnce sync.Once
+	closeMu   sync.Mutex
+	closeErr  error
 }
 
 // NewWorker constructs a Worker. ring, sender and encode are required; obs and
@@ -136,7 +142,12 @@ func NewWorker[T any](
 		baseCtx:    baseCtx,
 		cancelBase: cancel,
 		sem:        make(chan struct{}, cfg.MaxConcurrent),
-		rng:        newJitterRNG(),
+		dispatchGate: func() chan struct{} {
+			gate := make(chan struct{}, 1)
+			gate <- struct{}{}
+			return gate
+		}(),
+		rng: newJitterRNG(),
 	}
 }
 
@@ -189,6 +200,16 @@ func (w *Worker[T]) loop() {
 
 // dispatchReady pops and dispatches all currently-buffered batches.
 func (w *Worker[T]) dispatchReady(ctx context.Context) {
+	if !w.acquireDispatch(ctx) {
+		return
+	}
+	defer w.releaseDispatch()
+	w.dispatchReadyLocked(ctx)
+}
+
+// dispatchReadyLocked pops and dispatches all currently-buffered batches.
+// The caller holds dispatchGate.
+func (w *Worker[T]) dispatchReadyLocked(ctx context.Context) {
 	for {
 		batch := w.ring.PopBatch(w.cfg.BatchSize, w.cfg.MaxBatchBytes)
 		if len(batch) == 0 {
@@ -307,7 +328,11 @@ func (w *Worker[T]) expBackoff(attempt int) time.Duration {
 // drains even if the worker loop has self-disabled — a caller-driven dispatch —
 // so pending events are never silently left behind on a "successful" flush.
 func (w *Worker[T]) Flush(ctx context.Context) error {
-	w.dispatchReady(ctx)
+	if !w.acquireDispatch(ctx) {
+		return ctx.Err()
+	}
+	defer w.releaseDispatch()
+	w.dispatchReadyLocked(ctx)
 	// reportQueue is guarded here because Flush runs on the caller's goroutine;
 	// a misbehaving Observer must not panic the caller.
 	_ = safeguard.Do(w.reportQueue, w.onPanic)
@@ -318,21 +343,44 @@ func (w *Worker[T]) Flush(ctx context.Context) error {
 // all bounded by ctx. It is idempotent. The drain is caller-driven so it also
 // covers the case where the loop already exited (e.g. after self-disable).
 func (w *Worker[T]) Close(ctx context.Context) error {
-	var err error
 	w.closeOnce.Do(func() {
+		var err error
 		close(w.stop)
 		select {
 		case <-w.stopped:
 		case <-ctx.Done():
 			err = ctx.Err()
 		}
-		w.dispatchReady(ctx) // drain anything the loop did not (e.g. after self-disable)
-		if waitErr := w.waitInflight(ctx); waitErr != nil && err == nil {
-			err = waitErr
+		if w.acquireDispatch(ctx) {
+			w.dispatchReadyLocked(ctx) // drain anything the loop did not (e.g. after self-disable)
+			if waitErr := w.waitInflight(ctx); waitErr != nil && err == nil {
+				err = waitErr
+			}
+			w.releaseDispatch()
+		} else if err == nil {
+			err = ctx.Err()
 		}
 		w.cancelBase()
+		w.closeMu.Lock()
+		w.closeErr = err
+		w.closeMu.Unlock()
 	})
-	return err
+	w.closeMu.Lock()
+	defer w.closeMu.Unlock()
+	return w.closeErr
+}
+
+func (w *Worker[T]) acquireDispatch(ctx context.Context) bool {
+	select {
+	case <-w.dispatchGate:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (w *Worker[T]) releaseDispatch() {
+	w.dispatchGate <- struct{}{}
 }
 
 // waitInflight blocks until all in-flight sends complete or ctx expires.

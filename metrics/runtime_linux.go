@@ -5,6 +5,7 @@ package metrics
 import (
 	"io/fs"
 	"os"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -129,42 +130,65 @@ func (s *runtimeSource) readOpenFDs() (float64, bool) {
 // cpu.cfs_quota_us/cpu.cfs_period_us quota when set, else GOMAXPROCS (which
 // is itself cgroup-aware on modern Go).
 func (s *runtimeSource) cpuCoresAvailable() float64 {
+	available := float64(runtime.GOMAXPROCS(0))
 	if cores, ok := s.cgroupV2CPU(); ok {
-		return cores
+		return min(cores, available)
 	}
 	if cores, ok := s.cgroupV1CPU(); ok {
-		return cores
+		return min(cores, available)
 	}
-	return float64(runtime.GOMAXPROCS(0))
+	return available
 }
 
-// cgroupV2CPU parses /sys/fs/cgroup/cpu.max ("<quota|max> <period>").
+// cgroupV2CPU parses cpu.max along the process's cgroup ancestry and returns
+// the tightest quota.
 func (s *runtimeSource) cgroupV2CPU() (float64, bool) {
-	data, err := fs.ReadFile(s.fsys, "sys/fs/cgroup/cpu.max")
-	if err != nil {
-		return 0, false
+	leaf, mount, ok := s.cgroupDir("", true)
+	if !ok {
+		leaf, mount = "sys/fs/cgroup", "sys/fs/cgroup"
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) != 2 || fields[0] == "max" {
-		return 0, false
+	var tightest float64
+	for _, filename := range cgroupAncestorFiles(leaf, mount, "cpu.max") {
+		data, err := fs.ReadFile(s.fsys, filename)
+		if err != nil {
+			continue
+		}
+		fields := strings.Fields(string(data))
+		if len(fields) != 2 || fields[0] == "max" {
+			continue
+		}
+		quota, err1 := strconv.ParseFloat(fields[0], 64)
+		period, err2 := strconv.ParseFloat(fields[1], 64)
+		if err1 == nil && err2 == nil && quota > 0 && period > 0 {
+			cores := quota / period
+			if tightest == 0 || cores < tightest {
+				tightest = cores
+			}
+		}
 	}
-	quota, err1 := strconv.ParseFloat(fields[0], 64)
-	period, err2 := strconv.ParseFloat(fields[1], 64)
-	if err1 != nil || err2 != nil || quota <= 0 || period <= 0 {
-		return 0, false
-	}
-	return quota / period, true
+	return tightest, tightest > 0
 }
 
 // cgroupV1CPU parses the cgroup v1 cpu.cfs_quota_us / cpu.cfs_period_us pair
 // (-1 quota means no limit).
 func (s *runtimeSource) cgroupV1CPU() (float64, bool) {
-	quota, ok1 := s.readNumericFile("sys/fs/cgroup/cpu/cpu.cfs_quota_us")
-	period, ok2 := s.readNumericFile("sys/fs/cgroup/cpu/cpu.cfs_period_us")
-	if !ok1 || !ok2 || quota <= 0 || period <= 0 {
-		return 0, false
+	leaf, mount, ok := s.cgroupDir("cpu", false)
+	if !ok {
+		leaf, mount = "sys/fs/cgroup/cpu", "sys/fs/cgroup/cpu"
 	}
-	return quota / period, true
+	var tightest float64
+	dirs := cgroupAncestorDirs(leaf, mount)
+	for _, dir := range dirs {
+		quota, ok1 := s.readNumericFile(path.Join(dir, "cpu.cfs_quota_us"))
+		period, ok2 := s.readNumericFile(path.Join(dir, "cpu.cfs_period_us"))
+		if ok1 && ok2 && quota > 0 && period > 0 {
+			cores := quota / period
+			if tightest == 0 || cores < tightest {
+				tightest = cores
+			}
+		}
+	}
+	return tightest, tightest > 0
 }
 
 // memoryLimitBytes returns the memory available to the process: the cgroup
@@ -172,23 +196,153 @@ func (s *runtimeSource) cgroupV1CPU() (float64, bool) {
 // cgroup v1 memory.limit_in_bytes when set, else host MemTotal. It reports
 // false when nothing trustworthy is available.
 func (s *runtimeSource) memoryLimitBytes() (float64, bool) {
+	if leaf, mount, ok := s.cgroupDir("", true); ok {
+		var tightest float64
+		for _, filename := range cgroupAncestorFiles(leaf, mount, "memory.max") {
+			data, err := fs.ReadFile(s.fsys, filename)
+			if err != nil {
+				continue
+			}
+			text := strings.TrimSpace(string(data))
+			if text == "max" {
+				continue
+			}
+			if limit, err := strconv.ParseFloat(text, 64); err == nil && limit > 0 &&
+				(tightest == 0 || limit < tightest) {
+				tightest = limit
+			}
+		}
+		if tightest > 0 {
+			return tightest, true
+		}
+		return s.hostMemTotalBytes()
+	}
 	if data, err := fs.ReadFile(s.fsys, "sys/fs/cgroup/memory.max"); err == nil {
 		text := strings.TrimSpace(string(data))
-		if text == "max" {
-			return s.hostMemTotalBytes()
-		}
 		if limit, err := strconv.ParseFloat(text, 64); err == nil && limit > 0 {
 			return limit, true
 		}
 		return s.hostMemTotalBytes()
 	}
-	if limit, ok := s.readNumericFile("sys/fs/cgroup/memory/memory.limit_in_bytes"); ok {
-		if limit > 0 && limit < float64(v1UnlimitedThreshold) {
-			return limit, true
+	leaf, mount, ok := s.cgroupDir("memory", false)
+	if !ok {
+		leaf, mount = "sys/fs/cgroup/memory", "sys/fs/cgroup/memory"
+	}
+	var tightest float64
+	for _, filename := range cgroupAncestorFiles(leaf, mount, "memory.limit_in_bytes") {
+		if limit, found := s.readNumericFile(filename); found &&
+			limit > 0 && limit < float64(v1UnlimitedThreshold) &&
+			(tightest == 0 || limit < tightest) {
+			tightest = limit
 		}
-		return s.hostMemTotalBytes()
+	}
+	if tightest > 0 {
+		return tightest, true
 	}
 	return s.hostMemTotalBytes()
+}
+
+// cgroupDir resolves the process's cgroup membership against the corresponding
+// mount root from /proc/self/mountinfo.
+func (s *runtimeSource) cgroupDir(controller string, v2 bool) (leaf, mount string, ok bool) {
+	membership, found := s.cgroupMembership(controller, v2)
+	if !found {
+		return "", "", false
+	}
+	mountRoot, mountPoint, found := s.cgroupMount(controller, v2)
+	if !found {
+		if v2 {
+			mountRoot, mountPoint = "/", "/sys/fs/cgroup"
+		} else {
+			mountRoot, mountPoint = "/", "/sys/fs/cgroup/"+controller
+		}
+	}
+	member := path.Clean("/" + strings.TrimPrefix(membership, "/"))
+	root := path.Clean("/" + strings.TrimPrefix(mountRoot, "/"))
+	relative := strings.TrimPrefix(member, "/")
+	if member == root {
+		relative = ""
+	} else if strings.HasPrefix(member, root+"/") {
+		relative = strings.TrimPrefix(member, root+"/")
+	}
+	mount = strings.TrimPrefix(path.Clean(mountPoint), "/")
+	leaf = path.Join(mount, relative)
+	return leaf, mount, true
+}
+
+func (s *runtimeSource) cgroupMembership(controller string, v2 bool) (string, bool) {
+	data, err := fs.ReadFile(s.fsys, "proc/self/cgroup")
+	if err != nil {
+		return "", false
+	}
+	for line := range strings.Lines(string(data)) {
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		if v2 && parts[0] == "0" && parts[1] == "" {
+			return parts[2], true
+		}
+		if !v2 {
+			for configured := range strings.SplitSeq(parts[1], ",") {
+				if configured == controller {
+					return parts[2], true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func (s *runtimeSource) cgroupMount(controller string, v2 bool) (root, mountPoint string, ok bool) {
+	data, err := fs.ReadFile(s.fsys, "proc/self/mountinfo")
+	if err != nil {
+		return "", "", false
+	}
+	for line := range strings.Lines(string(data)) {
+		left, right, found := strings.Cut(strings.TrimSpace(line), " - ")
+		if !found {
+			continue
+		}
+		leftFields, rightFields := strings.Fields(left), strings.Fields(right)
+		if len(leftFields) < 5 || len(rightFields) < 3 {
+			continue
+		}
+		if v2 && rightFields[0] == "cgroup2" {
+			return leftFields[3], leftFields[4], true
+		}
+		if !v2 && rightFields[0] == "cgroup" {
+			for option := range strings.SplitSeq(rightFields[2], ",") {
+				if option == controller {
+					return leftFields[3], leftFields[4], true
+				}
+			}
+		}
+	}
+	return "", "", false
+}
+
+func cgroupAncestorFiles(leaf, mount, filename string) []string {
+	dirs := cgroupAncestorDirs(leaf, mount)
+	files := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		files = append(files, path.Join(dir, filename))
+	}
+	return files
+}
+
+func cgroupAncestorDirs(leaf, mount string) []string {
+	leaf, mount = path.Clean(leaf), path.Clean(mount)
+	dirs := []string{leaf}
+	for leaf != mount {
+		parent := path.Dir(leaf)
+		if parent == leaf || (!strings.HasPrefix(parent+"/", mount+"/") && parent != mount) {
+			break
+		}
+		dirs = append(dirs, parent)
+		leaf = parent
+	}
+	return dirs
 }
 
 // hostMemTotalBytes parses MemTotal from /proc/meminfo (reported in kB).

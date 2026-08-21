@@ -2,6 +2,7 @@ package logs
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 )
 
@@ -44,8 +45,17 @@ func sanitizeValue(v any, depth int) any {
 	switch value := v.(type) {
 	case string, bool,
 		int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64:
+		uint, uint8, uint16, uint32, uint64:
+		return value
+	case float32:
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return fmt.Sprintf("%v", value)
+		}
+		return value
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Sprintf("%v", value)
+		}
 		return value
 	case error:
 		return value.Error()
@@ -93,7 +103,7 @@ func sanitizeReflect(v any, depth int) any {
 		if rv.IsNil() {
 			return nil
 		}
-		return sanitizeValue(rv.Elem().Interface(), depth)
+		return sanitizeValue(rv.Elem().Interface(), depth+1)
 	default:
 		return fmt.Sprintf("%v", v)
 	}

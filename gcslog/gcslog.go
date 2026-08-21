@@ -24,6 +24,7 @@ import (
 	"log/slog"
 
 	groundcover "github.com/groundcover-com/groundcover-go"
+	"github.com/groundcover-com/groundcover-go/internal/safeguard"
 	gclogs "github.com/groundcover-com/groundcover-go/logs"
 )
 
@@ -65,7 +66,7 @@ type handler struct {
 func (h *handler) Enabled(_ context.Context, level slog.Level) bool {
 	minLevel := slog.LevelInfo
 	if h.opts.Level != nil {
-		minLevel = h.opts.Level.Level()
+		_ = safeguard.Do(func() { minLevel = h.opts.Level.Level() }, nil)
 	}
 	return level >= minLevel
 }
@@ -83,11 +84,13 @@ func (h *handler) Handle(ctx context.Context, r slog.Record) error {
 		return true
 	})
 
-	if h.opts.Client != nil {
-		h.opts.Client.EmitLog(ctx, toLevel(r.Level), r.Message, attrs)
-	} else {
-		groundcover.EmitLog(ctx, groundcover.Level(toLevel(r.Level)), r.Message, groundcover.Attributes(attrs))
-	}
+	_ = safeguard.Do(func() {
+		if h.opts.Client != nil {
+			h.opts.Client.EmitLog(ctx, toLevel(r.Level), r.Message, attrs)
+		} else {
+			groundcover.EmitLog(ctx, groundcover.Level(toLevel(r.Level)), r.Message, groundcover.Attributes(attrs))
+		}
+	}, nil)
 	return nil
 }
 
