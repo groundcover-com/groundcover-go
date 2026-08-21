@@ -36,6 +36,8 @@ func TestCollectorExposesMetrics(t *testing.T) {
 		`groundcover_sdk_logs_dropped_total{reason="overflow"}`,
 		`groundcover_sdk_logs_dropped_total{reason="before_send"}`,
 		"groundcover_sdk_logs_retries_total",
+		"groundcover_sdk_logs_panics_recovered_total",
+		"groundcover_sdk_logs_subsystems_disabled_total",
 		`groundcover_sdk_logs_queue_pending{unit="items"}`,
 	}
 	for _, w := range want {

@@ -65,6 +65,8 @@ func (c *Collector) register() {
 	lg(`groundcover_sdk_logs_dropped_total{reason="before_send"}`, func(s groundcover.Stats) int64 { return s.DroppedBeforeSend })
 	lg(`groundcover_sdk_logs_retries_total`, func(s groundcover.Stats) int64 { return s.Retries })
 	lg(`groundcover_sdk_logs_rate_limited_total`, func(s groundcover.Stats) int64 { return s.RateLimited })
+	lg(`groundcover_sdk_logs_panics_recovered_total`, func(s groundcover.Stats) int64 { return s.PanicsRecovered })
+	lg(`groundcover_sdk_logs_subsystems_disabled_total`, func(s groundcover.Stats) int64 { return s.SubsystemsDisabled })
 	lg(`groundcover_sdk_logs_queue_pending{unit="items"}`, func(s groundcover.Stats) int64 { return s.QueuePendingItems })
 	lg(`groundcover_sdk_logs_queue_pending{unit="bytes"}`, func(s groundcover.Stats) int64 { return s.QueuePendingBytes })
 }
