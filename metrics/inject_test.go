@@ -181,6 +181,44 @@ func TestNonUTF8SourceLineIsDroppedNotForwarded(t *testing.T) {
 	}
 }
 
+// Go's float parser takes forms the exposition format does not. Forwarding one
+// would abort the backend's parse of the whole body, so such a line is dropped
+// and counted like any other malformed sample while its neighbours survive.
+func TestSampleValuesGoAcceptsButPrometheusRejects(t *testing.T) {
+	cs := newCaptureServer(t)
+	source := textSource(strings.Join([]string{
+		`good_metric 1`,
+		`separated_metric 1_000`,
+		`hexfloat_metric 0x1p3`,
+		`exponent_metric 1e3`,
+		`infinite_metric +Inf`,
+		`nan_metric NaN`,
+		`fractional_metric .5`,
+	}, "\n") + "\n")
+	client, err := New(testConfig(cs), source)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := client.Push(context.Background()); err == nil {
+		t.Fatal("Push = nil, want the out-of-spec values reported")
+	}
+
+	body := cs.last().body
+	for _, name := range []string{"separated_metric", "hexfloat_metric"} {
+		if strings.Contains(body, name) {
+			t.Errorf("%s forwarded:\n%s", name, body)
+		}
+	}
+	for _, name := range []string{"good_metric", "exponent_metric", "infinite_metric", "nan_metric", "fractional_metric"} {
+		if !strings.Contains(body, name) {
+			t.Errorf("%s dropped:\n%s", name, body)
+		}
+	}
+	if stats := client.Stats(); stats.MalformedLines != 2 {
+		t.Errorf("MalformedLines = %d, want 2", stats.MalformedLines)
+	}
+}
+
 func TestInjectionThroughPush(t *testing.T) {
 	cs := newCaptureServer(t)
 	source := textSource(strings.Join([]string{

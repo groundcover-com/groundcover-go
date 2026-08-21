@@ -221,7 +221,7 @@ func parseSampleLine(line string) (sample, error) {
 	if len(fields) > 2 {
 		return sample{}, fmt.Errorf("metrics: trailing garbage in %q", line)
 	}
-	if _, err := strconv.ParseFloat(fields[0], 64); err != nil {
+	if !isExpositionFloat(fields[0]) {
 		return sample{}, fmt.Errorf("metrics: invalid sample value in %q", line)
 	}
 	s := sample{name: name, labels: labels, value: fields[0]}
@@ -288,6 +288,20 @@ func parseLabels(line string, i int) ([]label, int, error) {
 			return nil, 0, fmt.Errorf("metrics: expected ',' or '}' in %q", line)
 		}
 	}
+}
+
+// isExpositionFloat reports whether text is a sample value the Prometheus text
+// format accepts. strconv.ParseFloat is deliberately more permissive than the
+// exposition format — it takes digit separators ("1_000") and hex-float
+// exponents ("0x1p3") — and a value the backend's parser rejects aborts the
+// whole body, discarding every healthy series from every source. Upstream
+// expfmt screens the same three characters for the same reason.
+func isExpositionFloat(text string) bool {
+	if strings.ContainsAny(text, "_pP") {
+		return false
+	}
+	_, err := strconv.ParseFloat(text, 64)
+	return err == nil
 }
 
 type metadataEntry struct {
