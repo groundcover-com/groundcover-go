@@ -33,6 +33,9 @@ const (
 	// emitting and when querying them back from the logs API.
 	serviceName = "groundcover-go-logs-roundtrip"
 	envName     = "examples"
+	// relocatedValue is sent under the reserved "text" key and must come back
+	// as an "attributes.text" attribute, with the message left alone.
+	relocatedValue = "reserved key relocation"
 )
 
 func main() {
@@ -80,6 +83,10 @@ func run() error {
 		"example.float":  3.14,
 		"example.bool":   true,
 		"example.string": "hello",
+		// The intake extracts the message from "text", so the SDK relocates
+		// this attribute rather than letting it replace the message. The
+		// read-back below proves both halves against the live intake.
+		"text": relocatedValue,
 	})
 
 	// Layer 2: the slog bridge, with group flattening.
@@ -133,7 +140,12 @@ func queryLogs(env e2e.Environment) ([]json.RawMessage, error) {
 		},
 		"limit": 20, "skip": 0,
 		"sortBy": "timestamp", "sortOrder": "desc",
-		"selectors": []any{}, "optimizeSearch": true,
+		// Attributes are only returned when selected by name.
+		"selectors": []map[string]any{
+			{"key": "attributes.text", "origin": "additional", "type": "string"},
+			{"key": "text", "origin": "additional", "type": "string"},
+		},
+		"optimizeSearch": true,
 	})
 	if err != nil {
 		return nil, err
@@ -256,13 +268,34 @@ func verifyLogs(rows []json.RawMessage, testID string) error {
 		!strings.Contains(string(mustJSON(bridge)), testID) {
 		return errors.New("stored records missing test needle")
 	}
+	if err := verifyRelocatedAttribute(emission, testID); err != nil {
+		return err
+	}
 	return nil
 }
 
-// rowText extracts the log body from a stored row, tolerating either a body or
-// content field name.
+// verifyRelocatedAttribute checks that an attribute sent under a key the intake
+// extracts the message from was preserved under its prefixed name and did not
+// become the message.
+func verifyRelocatedAttribute(row map[string]any, testID string) error {
+	if body := rowText(row); body != "synthetic emission log "+testID {
+		return fmt.Errorf("message = %q, want the emitted message: a reserved attribute replaced it", body)
+	}
+	columns, _ := row["additionalColumns"].(map[string]any)
+	if got := columns["attributes.text"]; got != relocatedValue {
+		return fmt.Errorf("attributes.text = %v, want %q (columns: %v)", got, relocatedValue, columns)
+	}
+	// A selected column that was never sent reads back as an empty string.
+	if got, _ := columns["text"].(string); got != "" {
+		return fmt.Errorf("attribute reached the intake under its reserved name (columns: %v)", columns)
+	}
+	return nil
+}
+
+// rowText extracts the log body from a stored row, tolerating the field names
+// different intake versions use for it.
 func rowText(row map[string]any) string {
-	for _, k := range []string{"body", "content", "message"} {
+	for _, k := range []string{"line", "body", "content", "message"} {
 		if s, ok := row[k].(string); ok && s != "" {
 			return s
 		}
