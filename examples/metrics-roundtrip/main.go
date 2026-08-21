@@ -81,9 +81,25 @@ func run() error {
 		return fmt.Errorf("expected one clean successful push, stats=%+v", stats)
 	}
 
+	// The background worker's shutdown flush is the only thing that can
+	// deliver a sample recorded after the last interval, so record one and
+	// stop the worker immediately: the query below proves it arrived.
+	stop, err := client.Start(context.Background())
+	if err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+	reg.Gauge("example_shutdown_flush", nil).Set(1)
+	if err := stop(context.Background()); err != nil {
+		return fmt.Errorf("stop: %w", err)
+	}
+	if stats := client.Stats(); stats.PushFailures != 0 {
+		return fmt.Errorf("expected no push failures after the shutdown flush, stats=%+v", stats)
+	}
+
 	queries := []string{
 		fmt.Sprintf(`example_orders_total{job=%q,run_id=%q}`, job, runID),
 		fmt.Sprintf(`go_goroutines{job=%q,run_id=%q}`, job, runID),
+		fmt.Sprintf(`example_shutdown_flush{job=%q,run_id=%q}`, job, runID),
 	}
 	for _, query := range queries {
 		samples, err := pollForSamples(env, query)
