@@ -22,7 +22,7 @@ const (
 
 // Registry is a thread-safe collection of gauges, counters, and histograms
 // that renders itself in Prometheus text exposition format. It implements
-// Exposition. The zero value is not usable; construct with NewRegistry.
+// MetricSource. The zero value is not usable; construct with NewRegistry.
 //
 // Instrument lookups are idempotent: the same (name, labels) tuple always
 // returns the same instrument. Invalid metric or label names never panic;
@@ -124,7 +124,7 @@ func (r *Registry) Err() error {
 
 // WritePrometheus renders every series in Prometheus text format with
 // deterministic ordering: metric names sorted, label names sorted, series
-// within a family sorted by label signature. It implements Exposition.
+// within a family sorted by label signature. It implements MetricSource.
 func (r *Registry) WritePrometheus(w io.Writer) {
 	r.mu.RLock()
 	names := make([]string, 0, len(r.families))

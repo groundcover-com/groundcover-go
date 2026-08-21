@@ -8,14 +8,14 @@ import (
 	"testing"
 )
 
-// textSource is an Exposition emitting a fixed exposition text.
+// textSource is an MetricSource emitting a fixed exposition text.
 type textSource string
 
 func (s textSource) WritePrometheus(w io.Writer) {
 	_, _ = io.WriteString(w, string(s))
 }
 
-// panicSource is an Exposition that always panics.
+// panicSource is an MetricSource that always panics.
 type panicSource struct{}
 
 func (panicSource) WritePrometheus(io.Writer) { panic("source panic") }

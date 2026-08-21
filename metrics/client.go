@@ -19,11 +19,11 @@ import (
 // diagnostics.
 const maxErrorBodyBytes = 4 << 10
 
-// Exposition is a source of Prometheus text exposition format (0.0.4). The
+// MetricSource is a source of Prometheus text exposition format (0.0.4). The
 // built-in Registry implements it; any other producer (for example a
 // third-party metrics library's text writer) can be plugged in directly.
 // WritePrometheus must be safe for concurrent use with metric updates.
-type Exposition interface {
+type MetricSource interface {
 	// WritePrometheus writes the source's samples in Prometheus text format.
 	WritePrometheus(w io.Writer)
 }
@@ -32,14 +32,14 @@ type Exposition interface {
 // worker and waits for it to exit, bounded by ctx. It is idempotent.
 type StopFunc func(ctx context.Context) error
 
-// Client is a standalone push client that renders Exposition sources and
+// Client is a standalone push client that renders MetricSource sources and
 // POSTs them to the groundcover Prometheus import endpoint. Pushes are
 // serialized: a background worker push and a manual Push never overlap.
 type Client struct {
 	cfg        Config
 	endpoint   string
 	httpClient *http.Client
-	sources    []Exposition
+	sources    []MetricSource
 	fixed      []label
 	disabled   bool
 	onPanic    safeguard.Handler
@@ -55,10 +55,10 @@ type Client struct {
 }
 
 // New constructs a standalone metrics Client from cfg and the given
-// Exposition sources. Unless Config.DisableRuntimeMetrics is set, a built-in
+// MetricSource sources. Unless Config.DisableRuntimeMetrics is set, a built-in
 // Go runtime and process metrics source is collected in addition to sources.
 // New returns configuration errors and never panics.
-func New(cfg Config, sources ...Exposition) (*Client, error) {
+func New(cfg Config, sources ...MetricSource) (*Client, error) {
 	cfg = cfg.withDefaults()
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func New(cfg Config, sources ...Exposition) (*Client, error) {
 		client.disabled = true
 		return client, nil
 	}
-	client.sources = make([]Exposition, 0, len(sources)+1)
+	client.sources = make([]MetricSource, 0, len(sources)+1)
 	client.sources = append(client.sources, sources...)
 	if !cfg.DisableRuntimeMetrics {
 		client.sources = append(client.sources, newRuntimeSource())
@@ -89,7 +89,7 @@ func New(cfg Config, sources ...Exposition) (*Client, error) {
 
 // MustNew is like New but panics on a configuration error. It is a
 // convenience for main functions that cannot proceed without metrics.
-func MustNew(cfg Config, sources ...Exposition) *Client {
+func MustNew(cfg Config, sources ...MetricSource) *Client {
 	client, err := New(cfg, sources...)
 	if err != nil {
 		panic(err)

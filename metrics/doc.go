@@ -1,7 +1,7 @@
 // Package metrics is a standalone push client that delivers Prometheus
 // metrics directly to groundcover — no agent, sidecar, or scrape endpoint.
 //
-// The client renders one or more Exposition sources into Prometheus text
+// The client renders one or more MetricSource sources into Prometheus text
 // exposition format (0.0.4), injects fixed labels (job, instance, and any
 // configured extra labels) into every sample, gzip-compresses the payload,
 // and POSTs it to the groundcover Prometheus import endpoint. A background
@@ -10,7 +10,7 @@
 //
 // The package follows the SDK-wide safety guarantees: it is stdlib-only,
 // every public entry point and the background worker are panic-guarded, a
-// misbehaving Exposition source or OnError callback never crashes the host
+// misbehaving MetricSource source or OnError callback never crashes the host
 // application, and all payloads are bounded by configurable limits.
 //
 // Most programs need only the built-in Registry plus the runtime metrics

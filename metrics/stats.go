@@ -23,7 +23,7 @@ type Stats struct {
 	// LinesSkipped counts malformed source sample lines that were dropped
 	// instead of failing the push.
 	LinesSkipped int64
-	// SourcePanics counts panics recovered from Exposition sources and user
+	// SourcePanics counts panics recovered from MetricSource sources and user
 	// callbacks.
 	SourcePanics int64
 }

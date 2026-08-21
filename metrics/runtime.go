@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// runtimeSource is the built-in Exposition collected on every push unless
+// runtimeSource is the built-in MetricSource collected on every push unless
 // Config.DisableRuntimeMetrics is set. It emits standard Go runtime metrics
 // on every platform and, on Linux, process and cgroup-aware metrics read
 // from /proc and /sys/fs/cgroup.
@@ -27,7 +27,7 @@ func newRuntimeSource() *runtimeSource {
 	return &runtimeSource{fsys: rootFS()}
 }
 
-// WritePrometheus implements Exposition.
+// WritePrometheus implements MetricSource.
 func (s *runtimeSource) WritePrometheus(w io.Writer) {
 	var b strings.Builder
 	writeGoMetrics(&b)

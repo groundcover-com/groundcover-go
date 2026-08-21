@@ -184,7 +184,7 @@ reg.Histogram("request_seconds", nil, nil).Observe(0.042)
   `DisableRuntimeMetrics: true`.
 - Every sample gets `job` (defaults to `OTEL_SERVICE_NAME`/`GC_SERVICE_NAME`),
   `instance` (defaults to the hostname), and any configured `ExtraLabels`.
-  Any `Exposition` source (anything that can write Prometheus text format) can
+  Any `MetricSource` source (anything that can write Prometheus text format) can
   be plugged in next to the built-in `Registry`.
 - Payloads are bounded by documented limits (`MaxSeries` 10000,
   `MaxBodyBytes` 8MiB, per-label caps); exceeding one fails that push with a
