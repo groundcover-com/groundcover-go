@@ -1,94 +1,106 @@
 package groundcover
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+)
 
-// wireLogAttributes is the attributes bag of a "log" wire event, symmetric with
-// wireAttributes for "exception" events.
-type wireLogAttributes struct {
-	Message     string         `json:"message"`
-	LogMetadata map[string]any `json:"log_metadata,omitempty"`
+// wireLogLevel maps a Level to the direct logs intake convention, which uses
+// "warn" rather than OTel's "warning".
+func wireLogLevel(l Level) string {
+	if l == LevelWarning {
+		return "warn"
+	}
+	return string(l)
 }
 
-// wireLogEvent is the wire representation of a single log record.
-type wireLogEvent struct {
-	Type         string            `json:"type"`
-	Level        string            `json:"level,omitempty"`
-	Timestamp    int64             `json:"timestamp"`
-	ID           string            `json:"id"`
-	SpanID       string            `json:"spanId"`
-	ParentSpanID string            `json:"parentSpanId"`
-	TraceID      string            `json:"traceId"`
-	Attributes   wireLogAttributes `json:"attributes"`
+// isLogReservedKey reports whether an NDJSON field is owned by the SDK and
+// must not be set by caller attributes.
+func isLogReservedKey(k string) bool {
+	switch k {
+	case "timestamp", "msg", "message", wireKeyLevel, wireKeySeverity,
+		wireKeyUserID, wireKeyUserEmail, wireKeyUserName, wireKeyUserOrg,
+		wireKeySessionID, wireKeyAnonymousID:
+		return true
+	default:
+		return false
+	}
 }
 
-// wireLogPayload is the request body for a batch of log records. It shares the
-// session-attribute spine with the event payload.
-type wireLogPayload struct {
-	SessionAttributes map[string]any `json:"sessionAttributes"`
-	Events            []wireLogEvent `json:"events"`
-}
+// buildWireLog assembles one flat NDJSON record for /json/logs. Caller
+// attributes are written first; SDK-managed fields are written afterwards so
+// a caller cannot override them.
+func buildWireLog(l *Log, res resource) map[string]any {
+	record := make(map[string]any, len(l.Attributes)+len(res.attrs)+10)
 
-// buildLogMetadata assembles the log_metadata bag for a single record:
-// identity, detailed resource attributes, severity, and custom attributes.
-// Caller attributes are written first; SDK-managed keys are written afterwards
-// so a caller cannot override them. The record's Attributes are expected to be
-// sanitized already (done at capture).
-func buildLogMetadata(l *Log, res resource) map[string]any {
-	md := make(map[string]any, len(l.Attributes)+len(res.attrs)+8)
-
-	for k, v := range l.Attributes {
-		if isSDKManagedKey(k) {
-			continue
+	flattenInto(record, "", l.Attributes)
+	// Remove reserved keys a caller may have injected (directly or via a
+	// flattened nested map) before the SDK-managed values are written.
+	for k := range record {
+		if isLogReservedKey(k) {
+			delete(record, k)
 		}
-		md[k] = v
 	}
 
 	for k, v := range res.attrs {
 		if isSessionLevelKey(k) {
 			continue
 		}
-		md[k] = v
+		record[k] = v
 	}
 
-	setIfNonEmpty(md, "user.id", l.User.ID)
-	setIfNonEmpty(md, "user.email", l.User.Email)
-	setIfNonEmpty(md, "user.name", l.User.Name)
-	setIfNonEmpty(md, "user.organization", l.User.Organization)
-	setIfNonEmpty(md, "session.id", l.SessionID)
-	setIfNonEmpty(md, "anonymous_id", l.AnonymousID)
+	setIfNonEmptyAny(record, wireKeyUserID, l.User.ID)
+	setIfNonEmptyAny(record, wireKeyUserEmail, l.User.Email)
+	setIfNonEmptyAny(record, wireKeyUserName, l.User.Name)
+	setIfNonEmptyAny(record, wireKeyUserOrg, l.User.Organization)
+	setIfNonEmptyAny(record, wireKeySessionID, l.SessionID)
+	setIfNonEmptyAny(record, wireKeyAnonymousID, l.AnonymousID)
 
-	md["level"] = string(l.Level)
-	md["severity_number"] = l.Level.severityNumber()
-	return md
+	record["timestamp"] = l.Timestamp.UTC().Format(timeRFC3339Nano)
+	record["msg"] = l.Message
+	record[wireKeyLevel] = wireLogLevel(l.Level)
+	record[wireKeySeverity] = l.Level.severityNumber()
+	return record
 }
 
-// toWireLogEvent converts an internal Log to its wire representation.
-func toWireLogEvent(l *Log, res resource) wireLogEvent {
-	return wireLogEvent{
-		Type:         logEventType,
-		Level:        string(l.Level),
-		Timestamp:    l.Timestamp.UnixNano(),
-		ID:           l.ID,
-		SpanID:       newSpanID(),
-		ParentSpanID: "",
-		TraceID:      newTraceID(),
-		Attributes: wireLogAttributes{
-			Message:     l.Message,
-			LogMetadata: buildLogMetadata(l, res),
-		},
+const timeRFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"
+
+// flattenInto writes m into out, flattening nested maps to dotted keys
+// (mirroring the browser SDK's event formatting). Non-map values, including
+// slices, are written as-is under their dotted key.
+func flattenInto(out map[string]any, prefix string, m map[string]any) {
+	for k, v := range m {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		if nested, ok := v.(map[string]any); ok {
+			flattenInto(out, key, nested)
+			continue
+		}
+		out[key] = v
 	}
 }
 
-// encodeLogBatch serializes a batch of log records into the ingestion body.
+func setIfNonEmptyAny(m map[string]any, k, v string) {
+	if v != "" {
+		m[k] = v
+	}
+}
+
+// encodeLogBatch serializes a batch into newline-delimited JSON. The trailing
+// newline is intentional and accepted by the logs intake.
 func encodeLogBatch(logs []*Log, res resource) ([]byte, error) {
-	payload := wireLogPayload{
-		SessionAttributes: res.sessionAttributes(),
-		Events:            make([]wireLogEvent, 0, len(logs)),
-	}
+	var buf bytes.Buffer
 	for _, l := range logs {
-		payload.Events = append(payload.Events, toWireLogEvent(l, res))
+		line, err := json.Marshal(buildWireLog(l, res))
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
 	}
-	return json.Marshal(payload)
+	return buf.Bytes(), nil
 }
 
 // estimateLogSize returns a cheap byte estimate of a log record for the

@@ -1,27 +1,36 @@
 package groundcover
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/groundcover-com/groundcover-go/internal/testutil"
 )
 
-// decodeLogPayload unmarshals the last batch body the mock sender received as a
-// log payload.
-func decodeLogPayload(t *testing.T, sender *testutil.MockSender) wireLogPayload {
+// decodeLogPayload unmarshals the last NDJSON batch body the mock sender
+// received.
+func decodeLogPayload(t *testing.T, sender *testutil.MockSender) []map[string]any {
 	t.Helper()
 	bodies := sender.Bodies()
 	if len(bodies) == 0 {
 		t.Fatal("no body was sent")
 	}
-	var p wireLogPayload
-	if err := json.Unmarshal(bodies[len(bodies)-1], &p); err != nil {
-		t.Fatalf("unmarshal body: %v", err)
+	lines := bytes.Split(bytes.TrimSpace(bodies[len(bodies)-1]), []byte{'\n'})
+	records := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("unmarshal NDJSON line: %v", err)
+		}
+		records = append(records, record)
 	}
-	return p
+	return records
 }
 
 func TestEmitLogRoundTrip(t *testing.T) {
@@ -32,46 +41,117 @@ func TestEmitLogRoundTrip(t *testing.T) {
 	c.LogInfo(ctx, "order created", Attributes{
 		"order_id": "o-9",
 		"amount":   42.5,
+		"nested":   map[string]any{"a": map[string]any{"b": 1}},
 	})
 	if err := c.Flush(context.Background()); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 
-	p := decodeLogPayload(t, sender)
-	if p.SessionAttributes["service.name"] != "checkout" {
-		t.Fatalf("service.name = %v", p.SessionAttributes["service.name"])
+	records := decodeLogPayload(t, sender)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 log record, got %d", len(records))
 	}
-	if len(p.Events) != 1 {
-		t.Fatalf("expected 1 log event, got %d", len(p.Events))
+	record := records[0]
+	if record["msg"] != "order created" {
+		t.Fatalf("msg = %v", record["msg"])
 	}
-	ev := p.Events[0]
-	if ev.Type != "log" {
-		t.Fatalf("type = %q", ev.Type)
+	if record["level"] != "info" || record["severity_number"] != float64(9) {
+		t.Fatalf("severity wrong: level=%v severity_number=%v", record["level"], record["severity_number"])
 	}
-	if ev.Level != "info" {
-		t.Fatalf("level = %q", ev.Level)
+	if record["order_id"] != "o-9" || record["amount"] != 42.5 {
+		t.Fatalf("custom attrs wrong: %+v", record)
 	}
-	if ev.Attributes.Message != "order created" {
-		t.Fatalf("message = %q", ev.Attributes.Message)
+	if record["nested.a.b"] != float64(1) {
+		t.Fatalf("nested map not flattened to dotted key: %+v", record)
 	}
-	md := ev.Attributes.LogMetadata
-	if md["order_id"] != "o-9" || md["amount"] != 42.5 {
-		t.Fatalf("custom attrs wrong: %+v", md)
+	if record["user.id"] != "u-1" || record["user.organization"] != "acme" {
+		t.Fatalf("identity not in attributes: %+v", record)
 	}
-	if md["user.id"] != "u-1" || md["user.organization"] != "acme" {
-		t.Fatalf("identity not in log_metadata: %+v", md)
+	if record["telemetry.sdk.name"] != sdkName {
+		t.Fatalf("resource attr missing: %+v", record)
 	}
-	if md["level"] != "info" || md["severity_number"] != float64(9) {
-		t.Fatalf("severity wrong: level=%v severity_number=%v", md["level"], md["severity_number"])
-	}
-	if md["telemetry.sdk.name"] != sdkName {
-		t.Fatalf("resource attr missing: %+v", md)
+	if _, ok := record["timestamp"].(string); !ok {
+		t.Fatalf("timestamp must be an RFC3339 string: %+v", record)
 	}
 	if s := c.LogStats(); s.Captured != 1 || s.Sent != 1 {
 		t.Fatalf("log stats wrong: %+v", s)
 	}
 	if s := c.Stats(); s.Captured != 0 {
 		t.Fatalf("event stats must be untouched by logs: %+v", s)
+	}
+}
+
+func TestLogIntakeRequestContract(t *testing.T) {
+	type capturedRequest struct {
+		path        string
+		contentType string
+		encoding    string
+		auth        string
+		service     string
+		env         string
+		cluster     string
+		source      string
+		body        []byte
+	}
+	got := make(chan capturedRequest, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got <- capturedRequest{
+			path:        r.URL.Path,
+			contentType: r.Header.Get("Content-Type"),
+			encoding:    r.Header.Get("Content-Encoding"),
+			auth:        r.Header.Get("Authorization"),
+			service:     r.Header.Get("x-groundcover-service-name"),
+			env:         r.Header.Get("x-groundcover-env-name"),
+			cluster:     r.Header.Get("x-groundcover-cluster"),
+			source:      r.Header.Get("x-groundcover-source"),
+			body:        body,
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := New(Config{
+		DSN:              srv.URL,
+		IngestionKey:     "rum-key",
+		LogsIngestionKey: "logs-key",
+		ServiceName:      "checkout",
+		Env:              "production",
+		Cluster:          "cluster-a",
+		LogSource:        "my-source",
+		EnableLogs:       true,
+		HTTPClient:       srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = c.Close(context.Background()) }()
+
+	c.LogInfo(context.Background(), "log message", Attributes{"order_id": "o-9"})
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	req := <-got
+	if req.path != "/json/logs" {
+		t.Fatalf("path = %q", req.path)
+	}
+	if req.contentType != "application/x-ndjson" || req.encoding != "" {
+		t.Fatalf("content-type=%q content-encoding=%q", req.contentType, req.encoding)
+	}
+	if req.auth != "Bearer logs-key" {
+		t.Fatalf("authorization = %q", req.auth)
+	}
+	if req.service != "checkout" || req.env != "production" || req.cluster != "cluster-a" || req.source != "my-source" {
+		t.Fatalf("resource headers: service=%q env=%q cluster=%q source=%q",
+			req.service, req.env, req.cluster, req.source)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(req.body), &record); err != nil {
+		t.Fatalf("decode NDJSON: %v", err)
+	}
+	if record["msg"] != "log message" || record["order_id"] != "o-9" {
+		t.Fatalf("record = %+v", record)
 	}
 }
 
@@ -100,8 +180,42 @@ func TestEmitLogInvalidLevelDefaultsToInfo(t *testing.T) {
 	c.EmitLog(context.Background(), Level("bogus"), "msg")
 	_ = c.Flush(context.Background())
 
-	if got := decodeLogPayload(t, sender).Events[0].Level; got != "info" {
-		t.Fatalf("level = %q, want info", got)
+	if got := decodeLogPayload(t, sender)[0]["level"]; got != "info" {
+		t.Fatalf("level = %v, want info", got)
+	}
+}
+
+func TestLogWarnMapsToWireWarn(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{EnableLogs: true}, sender)
+
+	c.LogWarn(context.Background(), "w")
+	_ = c.Flush(context.Background())
+
+	attrs := decodeLogPayload(t, sender)[0]
+	// The RUM log contract uses "warn"; the OTel-style severity number stays 13.
+	if attrs["level"] != "warn" || attrs["severity_number"] != float64(13) {
+		t.Fatalf("level=%v severity_number=%v", attrs["level"], attrs["severity_number"])
+	}
+}
+
+func TestLogReservedKeysNotOverridable(t *testing.T) {
+	sender := &testutil.MockSender{}
+	c := mustClient(t, Config{EnableLogs: true}, sender)
+
+	c.LogInfo(context.Background(), "real message", Attributes{
+		"message": "spoofed",
+		"level":   "fatal",
+		"user.id": "spoofed-id",
+	})
+	_ = c.Flush(context.Background())
+
+	attrs := decodeLogPayload(t, sender)[0]
+	if attrs["msg"] != "real message" || attrs["level"] != "info" {
+		t.Fatalf("reserved keys overridden: %+v", attrs)
+	}
+	if _, ok := attrs["user.id"]; ok {
+		t.Fatalf("caller-injected identity must be dropped: %+v", attrs)
 	}
 }
 
@@ -116,12 +230,12 @@ func TestLogScopeAndPerCallPrecedence(t *testing.T) {
 	c.LogWarn(ctx, "w", Attributes{"key": "from-call"})
 	_ = c.Flush(context.Background())
 
-	md := decodeLogPayload(t, sender).Events[0].Attributes.LogMetadata
-	if md["key"] != "from-call" {
-		t.Fatalf("per-call attr must win, got %v", md["key"])
+	attrs := decodeLogPayload(t, sender)[0]
+	if attrs["key"] != "from-call" {
+		t.Fatalf("per-call attr must win, got %v", attrs["key"])
 	}
-	if md["only-scope"] != "x" {
-		t.Fatalf("scope attribute lost: %v", md["only-scope"])
+	if attrs["only-scope"] != "x" {
+		t.Fatalf("scope attribute lost: %v", attrs["only-scope"])
 	}
 }
 
@@ -142,12 +256,12 @@ func TestBeforeSendLog(t *testing.T) {
 	c.LogError(context.Background(), "secret payload")
 	_ = c.Flush(context.Background())
 
-	p := decodeLogPayload(t, sender)
-	if len(p.Events) != 1 {
-		t.Fatalf("expected 1 event after sampling, got %d", len(p.Events))
+	records := decodeLogPayload(t, sender)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record after sampling, got %d", len(records))
 	}
-	if p.Events[0].Attributes.Message != "scrubbed" {
-		t.Fatalf("message = %q, want scrubbed", p.Events[0].Attributes.Message)
+	if records[0]["msg"] != "scrubbed" {
+		t.Fatalf("msg = %v, want scrubbed", records[0]["msg"])
 	}
 	if s := c.LogStats(); s.DroppedBeforeSend != 1 {
 		t.Fatalf("expected 1 before_send drop, stats=%+v", s)
@@ -184,12 +298,12 @@ func TestLogfFormatting(t *testing.T) {
 	c.LogErrorf(context.Background(), "charge %s failed after %d tries", "ch_1", 3)
 	_ = c.Flush(context.Background())
 
-	ev := decodeLogPayload(t, sender).Events[0]
-	if ev.Attributes.Message != "charge ch_1 failed after 3 tries" {
-		t.Fatalf("message = %q", ev.Attributes.Message)
+	attrs := decodeLogPayload(t, sender)[0]
+	if attrs["msg"] != "charge ch_1 failed after 3 tries" {
+		t.Fatalf("msg = %v", attrs["msg"])
 	}
-	if ev.Level != string(LevelError) {
-		t.Fatalf("level = %q", ev.Level)
+	if attrs["level"] != string(LevelError) {
+		t.Fatalf("level = %v", attrs["level"])
 	}
 }
 
@@ -204,11 +318,11 @@ func TestLogIdentityHashed(t *testing.T) {
 	c.LogInfo(ctx, "m")
 	_ = c.Flush(context.Background())
 
-	md := decodeLogPayload(t, sender).Events[0].Attributes.LogMetadata
-	if md["user.id"] == "raw-id" || md["user.email"] == "a@b.c" {
-		t.Fatalf("identity not pseudonymized: %+v", md)
+	attrs := decodeLogPayload(t, sender)[0]
+	if attrs["user.id"] == "raw-id" || attrs["user.email"] == "a@b.c" {
+		t.Fatalf("identity not pseudonymized: %+v", attrs)
 	}
-	if md["user.id"] == "" {
+	if attrs["user.id"] == "" {
 		t.Fatal("hashed user.id must not be empty")
 	}
 }

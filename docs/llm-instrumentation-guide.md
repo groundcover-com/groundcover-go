@@ -297,7 +297,10 @@ Levels: `LevelDebug`, `LevelInfo`, `LevelWarning`, `LevelError`, `LevelFatal`.
 
 Set `EnableLogs: true` in the config to deliver application logs directly to
 groundcover. Logs travel on their own bounded queue, so log volume never evicts
-error events. Two ways to emit:
+error events. Set `LogsIngestionKey` when `/json/logs` uses a different key
+from the error/RUM intake; otherwise it falls back to `IngestionKey`. Configure
+the intake headers with `ServiceName`, `Env`, `Cluster`, and `LogSource`
+(`"go"` by default). Two ways to emit:
 
 ```go
 // Direct emission API — for new call sites:

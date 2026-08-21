@@ -11,6 +11,7 @@ never enter the core library's `go.sum`.
 | [`before-send`](before-send) | keep PII out and control volume: `BeforeSend` redacts emails/secrets and drops noisy events, `Hasher` pseudonymizes identity | `go run ./before-send` |
 | [`explicit-client`](explicit-client) | use an explicit `*Client` (libraries/multi-tenant) instead of the global; wire it into the net/http middleware, run a worker under an isolated scope, and read back `Stats` | `go run ./explicit-client` |
 | [`logs`](logs) | direct log delivery (`EnableLogs`): the emission API (`LogInfo`/`LogErrorf`) and the stdlib slog bridge (`gcslog`), sharing one client and request scope — no agent or tailer | `go run ./logs` |
+| [`logs-roundtrip`](logs-roundtrip) | **end-to-end logs**: submit one direct and one slog-bridge record to `/json/logs`, then query the logs API and verify both | `go run ./logs-roundtrip` |
 | [`nethttp`](nethttp) | `net/http` middleware (panic recovery + per-request scope) | `go run ./nethttp` |
 | [`gin`](gin) | Gin middleware (panic recovery + `c.Error` capture) | `go run ./gin` |
 | [`echo`](echo) | Echo middleware (panic recovery + handler error capture) | `go run ./echo` |
@@ -28,6 +29,7 @@ credentials. To send real data, set the standard environment variables:
 ```bash
 export GC_DSN=https://<ingestion-origin>      # BYOC ingestion origin
 export GC_INGESTION_KEY=<write-key>           # RUM-type ingestion key
+export GC_LOGS_INGESTION_KEY=<logs-write-key> # only when logs use a separate key
 # roundtrip also needs the read API:
 export GC_API_KEY=<read-key>
 export GC_API_URL=https://api.groundcover.com

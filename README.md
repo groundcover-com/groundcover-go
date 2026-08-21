@@ -70,9 +70,22 @@ func main() {
 ### Logs — no agent, no tailer
 
 With `EnableLogs: true`, the SDK delivers application logs straight to
-groundcover over the same authenticated pipeline used for errors. Logs travel
-on their **own bounded queue**, so log volume never evicts or delays error
-events.
+groundcover's dedicated `/json/logs` intake as NDJSON — no local agent or
+tailer. Logs travel on their **own bounded queue**, so log volume never evicts
+or delays error events.
+
+```go
+groundcover.Config{
+	EnableLogs:       true,
+	LogsIngestionKey: "<logs-ingestion-key>", // omit when IngestionKey works for both intakes
+	LogSource:        "my-source",             // defaults to "go"
+}
+```
+
+The SDK sets the service, environment, cluster, and source intake headers from
+`ServiceName`, `Env`, `Cluster`, and `LogSource`. Each NDJSON record uses an
+RFC 3339 Nano `timestamp`, `msg`, and `level`; all other fields are retained as
+log attributes.
 
 There are two layers, by design:
 

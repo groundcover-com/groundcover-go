@@ -9,9 +9,6 @@ import (
 	"github.com/groundcover-com/groundcover-go/internal/selfmetrics"
 )
 
-// logEventType is the wire event type for log records.
-const logEventType = "log"
-
 // Log is the internal representation of a captured log record. Public callers
 // never build a Log directly; the EmitLog / Log* APIs do. It is exported only
 // so that Config.BeforeSendLog can inspect, scrub, or drop records.

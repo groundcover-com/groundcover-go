@@ -1,7 +1,7 @@
-// Package transport owns all network I/O for the SDK: a single HTTP sender that
-// POSTs gzipped JSON batches, and a single background worker that batches,
-// retries, and flushes from the bounded buffer. It is the sole network owner;
-// no other part of the SDK performs I/O.
+// Package transport owns all network I/O for the SDK: HTTP senders for the
+// signal-specific intakes and background workers that batch, retry, and flush
+// bounded buffers. It is the sole network owner; no other part of the SDK
+// performs I/O.
 package transport
 
 import (
@@ -20,7 +20,7 @@ import (
 // diagnostics, preventing a hostile or buggy server from forcing a large read.
 const maxErrorBodyBytes = 4 << 10
 
-// Sender delivers an encoded (uncompressed JSON) batch body to the backend.
+// Sender delivers an encoded batch body to the backend.
 type Sender interface {
 	// Send delivers body. A nil return means success. Failures are returned as
 	// *SendError so the worker can decide whether and how to retry.
@@ -71,9 +71,19 @@ type HTTPConfig struct {
 	UserAgent string
 	// Client is the HTTP client to use. Required.
 	Client *http.Client
+	// ContentType is the request content type. Empty defaults to
+	// application/json.
+	ContentType string
+	// Headers are additional request headers. The sender copies them onto each
+	// request before applying its managed authorization and content headers.
+	Headers http.Header
+	// DisableCompression sends the encoder output as-is instead of gzip
+	// compressing it. The logs intake expects raw NDJSON.
+	DisableCompression bool
 }
 
-// HTTPSender is the default Sender. It gzips the body and POSTs it as JSON.
+// HTTPSender is the default Sender. It POSTs the encoded body, gzip-compressed
+// by default.
 type HTTPSender struct {
 	cfg HTTPConfig
 }
@@ -89,18 +99,33 @@ func NewHTTPSender(cfg HTTPConfig) *HTTPSender {
 
 // Send gzips and POSTs body to the configured endpoint, classifying the result.
 func (s *HTTPSender) Send(ctx context.Context, body []byte) error {
-	gzipped, err := gzipBytes(body)
-	if err != nil {
-		return &SendError{Retryable: false, Err: fmt.Errorf("gzip: %w", err)}
+	requestBody := body
+	if !s.cfg.DisableCompression {
+		gzipped, err := gzipBytes(body)
+		if err != nil {
+			return &SendError{Retryable: false, Err: fmt.Errorf("gzip: %w", err)}
+		}
+		requestBody = gzipped
 	}
 
 	// The endpoint is SDK-owned configuration, not attacker-controlled input.
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.Endpoint, bytes.NewReader(gzipped))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.Endpoint, bytes.NewReader(requestBody))
 	if err != nil {
 		return &SendError{Retryable: false, Err: fmt.Errorf("build request: %w", err)}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
+	for k, values := range s.cfg.Headers {
+		for _, value := range values {
+			req.Header.Add(k, value)
+		}
+	}
+	contentType := s.cfg.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
+	if !s.cfg.DisableCompression {
+		req.Header.Set("Content-Encoding", "gzip")
+	}
 	if s.cfg.UserAgent != "" {
 		req.Header.Set("User-Agent", s.cfg.UserAgent)
 	}

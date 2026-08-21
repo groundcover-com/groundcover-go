@@ -1,7 +1,7 @@
 package gcslog_test
 
 import (
-	"compress/gzip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -15,19 +15,14 @@ import (
 	"github.com/groundcover-com/groundcover-go/gcslog"
 )
 
-// capture is an httptest handler that decompresses and stores ingestion bodies.
+// capture is an httptest handler that stores ingestion bodies.
 type capture struct {
 	mu     sync.Mutex
 	bodies [][]byte
 }
 
 func (c *capture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	zr, err := gzip.NewReader(r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	body, err := io.ReadAll(zr)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -46,17 +41,6 @@ func (c *capture) all() [][]byte {
 	return out
 }
 
-type wirePayload struct {
-	Events []struct {
-		Type       string `json:"type"`
-		Level      string `json:"level"`
-		Attributes struct {
-			Message     string         `json:"message"`
-			LogMetadata map[string]any `json:"log_metadata"`
-		} `json:"attributes"`
-	} `json:"events"`
-}
-
 func newTestClient(t *testing.T, sink *capture) *groundcover.Client {
 	t.Helper()
 	srv := httptest.NewServer(sink)
@@ -72,21 +56,23 @@ func newTestClient(t *testing.T, sink *capture) *groundcover.Client {
 	return c
 }
 
-func decodeAll(t *testing.T, sink *capture) wirePayload {
+func decodeAll(t *testing.T, sink *capture) []map[string]any {
 	t.Helper()
 	bodies := sink.all()
 	if len(bodies) == 0 {
 		t.Fatal("no body was delivered")
 	}
-	var merged wirePayload
+	var records []map[string]any
 	for _, b := range bodies {
-		var p wirePayload
-		if err := json.Unmarshal(b, &p); err != nil {
-			t.Fatalf("unmarshal: %v", err)
+		for _, line := range bytes.Split(bytes.TrimSpace(b), []byte{'\n'}) {
+			var record map[string]any
+			if err := json.Unmarshal(line, &record); err != nil {
+				t.Fatalf("unmarshal NDJSON line: %v", err)
+			}
+			records = append(records, record)
 		}
-		merged.Events = append(merged.Events, p.Events...)
 	}
-	return merged
+	return records
 }
 
 func TestHandlerForwardsRecords(t *testing.T) {
@@ -101,24 +87,23 @@ func TestHandlerForwardsRecords(t *testing.T) {
 		t.Fatalf("flush: %v", err)
 	}
 
-	p := decodeAll(t, sink)
-	if len(p.Events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(p.Events))
+	records := decodeAll(t, sink)
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
 	}
-	info := p.Events[0]
-	if info.Type != "log" || info.Level != "info" || info.Attributes.Message != "order created" {
+	info := records[0]
+	if info["level"] != "info" || info["msg"] != "order created" {
 		t.Fatalf("unexpected info record: %+v", info)
 	}
-	md := info.Attributes.LogMetadata
-	if md["order_id"] != "o-9" || md["qty"] != float64(3) {
-		t.Fatalf("attrs wrong: %+v", md)
+	if info["order_id"] != "o-9" || info["qty"] != float64(3) {
+		t.Fatalf("attrs wrong: %+v", info)
 	}
-	warn := p.Events[1]
-	if warn.Level != "warning" {
-		t.Fatalf("slog warn must map to warning, got %q", warn.Level)
+	warn := records[1]
+	if warn["level"] != "warn" {
+		t.Fatalf("slog warn must map to warn, got %v", warn["level"])
 	}
-	if warn.Attributes.LogMetadata["http.status"] != float64(429) {
-		t.Fatalf("group attr not dotted: %+v", warn.Attributes.LogMetadata)
+	if warn["http.status"] != float64(429) {
+		t.Fatalf("group attr not dotted: %+v", warn)
 	}
 }
 
@@ -134,16 +119,16 @@ func TestHandlerWithAttrsAndGroups(t *testing.T) {
 
 	_ = client.Flush(context.Background())
 
-	p := decodeAll(t, sink)
-	md := p.Events[0].Attributes.LogMetadata
-	if md["service_tier"] != "gold" {
-		t.Fatalf("pre-group attr lost: %+v", md)
+	records := decodeAll(t, sink)
+	attrs := records[0]
+	if attrs["service_tier"] != "gold" {
+		t.Fatalf("pre-group attr lost: %+v", attrs)
 	}
-	if md["req.method"] != "GET" || md["req.path"] != "/checkout" {
-		t.Fatalf("grouped attrs wrong: %+v", md)
+	if attrs["req.method"] != "GET" || attrs["req.path"] != "/checkout" {
+		t.Fatalf("grouped attrs wrong: %+v", attrs)
 	}
-	if p.Events[0].Level != "error" {
-		t.Fatalf("level = %q", p.Events[0].Level)
+	if attrs["level"] != "error" {
+		t.Fatalf("level = %v", attrs["level"])
 	}
 }
 
@@ -158,9 +143,9 @@ func TestHandlerMinimumLevel(t *testing.T) {
 
 	_ = client.Flush(context.Background())
 
-	p := decodeAll(t, sink)
-	if len(p.Events) != 1 || p.Events[0].Attributes.Message != "kept" {
-		t.Fatalf("expected only the warn record, got %+v", p.Events)
+	records := decodeAll(t, sink)
+	if len(records) != 1 || records[0]["msg"] != "kept" {
+		t.Fatalf("expected only the warn record, got %+v", records)
 	}
 }
 

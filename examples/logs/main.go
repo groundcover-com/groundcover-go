@@ -22,11 +22,13 @@ import (
 
 func main() {
 	if err := gc.Init(gc.Config{
-		DSN:          envOr("GC_DSN", "https://example.invalid"),
-		IngestionKey: os.Getenv("GC_INGESTION_KEY"),
-		ServiceName:  "examples-logs",
-		Env:          "examples",
-		EnableLogs:   true, // the log signal is opt-in
+		DSN:              envOr("GC_DSN", "https://example.invalid"),
+		IngestionKey:     os.Getenv("GC_INGESTION_KEY"),
+		LogsIngestionKey: os.Getenv("GC_LOGS_INGESTION_KEY"),
+		ServiceName:      "examples-logs",
+		Env:              "examples",
+		Cluster:          envOr("GC_CLUSTER", "examples"),
+		EnableLogs:       true, // the log signal is opt-in
 	}); err != nil {
 		fatalf("init: %v", err)
 	}

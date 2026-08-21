@@ -6,6 +6,17 @@ import "encoding/json"
 // value (number/bool) in the buffer's byte budget.
 const scalarSizeEstimate = 16
 
+const (
+	wireKeyLevel       = "level"
+	wireKeySeverity    = "severity_number"
+	wireKeyUserID      = "user.id"
+	wireKeyUserEmail   = "user.email"
+	wireKeyUserName    = "user.name"
+	wireKeyUserOrg     = "user.organization"
+	wireKeySessionID   = "session.id"
+	wireKeyAnonymousID = "anonymous_id"
+)
+
 type wireFrame struct {
 	Filename string `json:"filename"`
 	Function string `json:"function"`
@@ -94,16 +105,16 @@ func buildMetadata(e *Event, res resource) map[string]any {
 	}
 
 	// Identity as dotted keys.
-	setIfNonEmpty(md, "user.id", e.User.ID)
-	setIfNonEmpty(md, "user.email", e.User.Email)
-	setIfNonEmpty(md, "user.name", e.User.Name)
-	setIfNonEmpty(md, "user.organization", e.User.Organization)
-	setIfNonEmpty(md, "session.id", e.SessionID)
-	setIfNonEmpty(md, "anonymous_id", e.AnonymousID)
+	setIfNonEmpty(md, wireKeyUserID, e.User.ID)
+	setIfNonEmpty(md, wireKeyUserEmail, e.User.Email)
+	setIfNonEmpty(md, wireKeyUserName, e.User.Name)
+	setIfNonEmpty(md, wireKeyUserOrg, e.User.Organization)
+	setIfNonEmpty(md, wireKeySessionID, e.SessionID)
+	setIfNonEmpty(md, wireKeyAnonymousID, e.AnonymousID)
 
 	// Severity (always numeric severity_number + string level).
-	md["level"] = string(e.Level)
-	md["severity_number"] = e.Level.severityNumber()
+	md[wireKeyLevel] = string(e.Level)
+	md[wireKeySeverity] = e.Level.severityNumber()
 
 	// Reserved gc.* namespace: the human-readable display title (separate from
 	// the opaque error_fingerprint grouping key).
@@ -117,8 +128,8 @@ func buildMetadata(e *Event, res resource) map[string]any {
 // not be set or overridden by caller attributes.
 func isSDKManagedKey(k string) bool {
 	switch k {
-	case "user.id", "user.email", "user.name", "user.organization",
-		"session.id", "anonymous_id", "level", "severity_number", "gc.title":
+	case wireKeyUserID, wireKeyUserEmail, wireKeyUserName, wireKeyUserOrg,
+		wireKeySessionID, wireKeyAnonymousID, wireKeyLevel, wireKeySeverity, "gc.title":
 		return true
 	default:
 		return false

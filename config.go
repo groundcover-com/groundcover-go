@@ -46,6 +46,10 @@ type Config struct {
 	// site). It is optional ONLY when DSN points at a local in-cluster sensor,
 	// which needs no auth. Use a RUM-type ingestion key.
 	IngestionKey string
+	// LogsIngestionKey is the write key for /json/logs. It is required when
+	// the logs intake uses a different key from the RUM/error intake. When
+	// empty, IngestionKey is used for both.
+	LogsIngestionKey string
 
 	// ServiceName sets the service identity (OpenTelemetry service.name; the
 	// "service" in Datadog/OTel terms). Auto-detected from OTEL_SERVICE_NAME /
@@ -54,6 +58,9 @@ type Config struct {
 	ServiceName string
 	// Env overrides deployment.environment.name (env: GC_ENV / DEPLOYMENT_ENVIRONMENT).
 	Env string
+	// Cluster overrides the x-groundcover-cluster header used by the logs
+	// intake (env: GC_CLUSTER / CLUSTER_NAME / K8S_CLUSTER_NAME).
+	Cluster string
 	// Release overrides service.version (env: GC_RELEASE).
 	Release string
 
@@ -89,6 +96,9 @@ type Config struct {
 	// (sized by the same MaxQueue/MaxBytes/BatchSize knobs) so log volume
 	// never evicts or delays error events.
 	EnableLogs bool
+	// LogSource sets the x-groundcover-source header used by the direct logs
+	// intake. It defaults to "go".
+	LogSource string
 	// BeforeSendLog can scrub or sample a log record; returning nil drops it.
 	// It runs before identity hashing, like BeforeSend.
 	BeforeSendLog func(*Log) *Log
@@ -110,6 +120,9 @@ type Config struct {
 
 // withDefaults returns a copy of cfg with zero fields replaced by defaults.
 func (c Config) withDefaults() Config {
+	if c.LogSource == "" {
+		c.LogSource = "go"
+	}
 	if c.MaxQueue <= 0 {
 		c.MaxQueue = defaultMaxQueue
 	}
@@ -161,4 +174,13 @@ func (c Config) endpoint() string {
 		dsn = "https://" + dsn
 	}
 	return dsn + ingestPath
+}
+
+// logsEndpoint returns the dedicated NDJSON logs intake URL.
+func (c Config) logsEndpoint() string {
+	dsn := strings.TrimRight(strings.TrimSpace(c.DSN), "/")
+	if dsn != "" && !strings.HasPrefix(dsn, "http://") && !strings.HasPrefix(dsn, "https://") {
+		dsn = "https://" + dsn
+	}
+	return dsn + "/json/logs"
 }
