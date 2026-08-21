@@ -353,9 +353,16 @@ func (w *Worker[T]) Flush(ctx context.Context) error {
 }
 
 // Close stops the worker, drains remaining items, and waits for in-flight sends,
-// all bounded by ctx. Stopping the loop happens once; a timed-out Close can be
-// retried and will still drain. The drain is caller-driven so it also covers
-// the case where the loop already exited (e.g. after self-disable).
+// all bounded by ctx. The drain is caller-driven so it also covers the case
+// where the loop already exited (e.g. after self-disable).
+//
+// Stopping the loop happens once, and Close may be retried: a Close that gives
+// up before it reaches the drain — because the loop or another drain is still
+// busy — leaves everything queued and delivers it on the next attempt, with
+// in-flight requests still bounded by the HTTP client's own timeout. Once Close
+// has waited for in-flight sends and its deadline expires, delivery is
+// abandoned: the shutdown budget is spent, so sends are cancelled rather than
+// left running behind a returned Close.
 func (w *Worker[T]) Close(ctx context.Context) error {
 	w.stopOnce.Do(func() { close(w.stop) })
 	select {
