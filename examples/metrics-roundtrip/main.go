@@ -69,9 +69,16 @@ func run() error {
 		return fmt.Errorf("push: %w", err)
 	}
 	stats := client.Stats()
-	fmt.Printf("metrics-roundtrip: pushed %d series (stats %+v), polling query API...\n", stats.SeriesLastPush, stats)
-	if stats.PushesSucceeded != 1 {
-		return fmt.Errorf("expected 1 successful push, stats=%+v", stats)
+	fmt.Printf("metrics-roundtrip: pushed %d series / %d bytes (stats %+v), polling query API...\n",
+		stats.SeriesLastPush, stats.BytesLastPush, stats)
+	if stats.Pushes != 1 {
+		return fmt.Errorf("expected Stats().Pushes == 1, stats=%+v", stats)
+	}
+	if stats.SeriesLastPush <= 0 {
+		return fmt.Errorf("expected Stats().SeriesLastPush > 0, stats=%+v", stats)
+	}
+	if stats.PushFailures != 0 || stats.PartialPushes != 0 || stats.LastSuccess.IsZero() {
+		return fmt.Errorf("expected one clean successful push, stats=%+v", stats)
 	}
 
 	queries := []string{
