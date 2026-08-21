@@ -16,7 +16,9 @@ import (
 // time, or ts, and by the SDK, which writes level, severity_number, service,
 // env, cluster, source, user.*, session.id, and anonymous_id. An attribute
 // under one of those names is delivered under an "attributes." prefix instead
-// of overwriting the record's own message, time, or identity.
+// of overwriting the record's own message, time, or identity. If that
+// destination is already occupied, the SDK prefixes again until both caller
+// values have distinct keys.
 type Attributes map[string]any
 
 const maxAttrDepth = 10

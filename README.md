@@ -119,7 +119,8 @@ The intake extracts the message from `message`/`msg`/`log`/`body`/`content`/
 `text` and the timestamp from `timestamp`/`time`/`ts`, so an attribute under one
 of those names — or under a key the SDK writes, such as `level` or `user.id` —
 is delivered under an `attributes.` prefix rather than overwriting the record's
-own message, time, or identity.
+own message, time, or identity. If that destination already exists, the SDK
+prefixes again until both values have distinct keys.
 
 There are two layers, by design:
 
