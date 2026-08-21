@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -102,12 +103,16 @@ func (c Config) withDefaults() Config {
 	if c.Timeout <= 0 {
 		c.Timeout = defaultTimeout
 	}
+	// Defaults come from the environment and the hostname, which can hold
+	// arbitrary bytes. An unusable default is dropped rather than failing
+	// construction over a value the caller never set; an explicitly configured
+	// value is rejected by validate instead.
 	if c.Job == "" {
-		c.Job = firstNonEmpty(os.Getenv("OTEL_SERVICE_NAME"), os.Getenv("GC_SERVICE_NAME"))
+		c.Job = usableLabelValue(firstNonEmpty(os.Getenv("OTEL_SERVICE_NAME"), os.Getenv("GC_SERVICE_NAME")))
 	}
 	if c.Instance == "" {
 		hostname, _ := os.Hostname()
-		c.Instance = hostname
+		c.Instance = usableLabelValue(hostname)
 	}
 	if c.MaxSeries <= 0 {
 		c.MaxSeries = defaultMaxSeries
@@ -161,13 +166,22 @@ func (c Config) validate() error {
 		if len(value) > c.MaxLabelValueBytes {
 			return fmt.Errorf("metrics: ExtraLabels value for %q exceeds MaxLabelValueBytes (%d)", name, c.MaxLabelValueBytes)
 		}
+		if !utf8.ValidString(value) {
+			return fmt.Errorf("metrics: ExtraLabels value for %q is not valid UTF-8", name)
+		}
 	}
+	// Job and Instance default from the environment and the hostname, so they
+	// can carry arbitrary bytes too. A fixed label is injected into every
+	// sample, so one bad value would make every push out of spec.
 	for name, value := range map[string]string{
 		labelJob:      c.Job,
 		labelInstance: c.Instance,
 	} {
 		if len(value) > c.MaxLabelValueBytes {
 			return fmt.Errorf("metrics: %s value exceeds MaxLabelValueBytes (%d)", name, c.MaxLabelValueBytes)
+		}
+		if !utf8.ValidString(value) {
+			return fmt.Errorf("metrics: %s value is not valid UTF-8", name)
 		}
 	}
 	fixedLabelCount := len(c.ExtraLabels)
@@ -210,6 +224,15 @@ func (c Config) fixedLabels() []label {
 	}
 	sort.Slice(labels, func(i, j int) bool { return labels[i].name < labels[j].name })
 	return labels
+}
+
+// usableLabelValue returns value if it can be rendered in the exposition
+// format, and the empty string otherwise, which omits the label.
+func usableLabelValue(value string) string {
+	if !utf8.ValidString(value) {
+		return ""
+	}
+	return value
 }
 
 func firstNonEmpty(values ...string) string {

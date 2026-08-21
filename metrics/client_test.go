@@ -256,6 +256,11 @@ func TestNewValidation(t *testing.T) {
 		{"too many fixed labels", Config{DSN: "x", Job: "j", Instance: "i", MaxLabelsPerSeries: 1}},
 		{"reserved extra label prefix", Config{DSN: "x", ExtraLabels: map[string]string{"__name__": "x"}}},
 		{"both DSN and Endpoint", Config{DSN: "x", Endpoint: "https://y.example.com/push"}},
+		// Fixed labels reach every sample, so invalid bytes there would make
+		// the whole exposition out of spec on every push.
+		{"configured job not utf-8", Config{DSN: "x", Job: "svc\xff"}},
+		{"configured instance not utf-8", Config{DSN: "x", Instance: "host\xff"}},
+		{"extra label value not utf-8", Config{DSN: "x", ExtraLabels: map[string]string{"tag": "a\xffb"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -266,6 +271,19 @@ func TestNewValidation(t *testing.T) {
 	}
 	if _, err := New(Config{Disabled: true}); err != nil {
 		t.Errorf("New(Disabled) = %v, want nil", err)
+	}
+
+	// An unusable default is dropped instead of failing construction over a
+	// value the caller never set.
+	t.Setenv("OTEL_SERVICE_NAME", "svc\xff")
+	client, err := New(Config{DSN: "x"})
+	if err != nil {
+		t.Fatalf("New with an invalid environment default = %v, want nil", err)
+	}
+	for _, l := range client.fixed {
+		if l.name == labelJob {
+			t.Errorf("job label kept an unusable default %q", l.value)
+		}
 	}
 }
 
