@@ -17,7 +17,7 @@ require (
 	github.com/labstack/echo/v4 v4.15.4
 	github.com/urfave/negroni/v3 v3.1.1
 	github.com/valyala/fasthttp v1.72.0
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.83.2
 )
 
 require (
@@ -102,11 +102,11 @@ require (
 	github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.7.0 // indirect
 	golang.org/x/arch v0.28.0 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
